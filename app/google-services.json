@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "978683285776",
+    "project_id": "kalender-ee54d",
+    "storage_bucket": "kalender-ee54d.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:978683285776:android:bac29cc0329dc7d0a5d595",
+        "android_client_info": {
+          "package_name": "com.remotwrt.bot"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAhFmRh15kmdYS0dDlbiYMQJYF4PUEWBnE"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
