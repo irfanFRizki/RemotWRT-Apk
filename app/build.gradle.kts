@@ -16,7 +16,7 @@ android {
         // the GitHub Release tag (vN) the in-app updater compares against.
         // Falls back to 1 for local/manual builds where that's not set.
         versionCode = (project.findProperty("verCode") as String?)?.toIntOrNull() ?: 1
-        versionName = "1.0.0"
+        versionName = "1.0.0+${versionCode}"
     }
 
     // Populated from env vars that only exist in CI (set from the
