@@ -11,6 +11,11 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      # `if:` conditions can't reference `secrets.*` directly (GitHub Actions
+      # restriction) -- routing it through a job-level env var first works
+      # around that, since `env.*` IS allowed in `if:`.
+      HAS_SIGNING: ${{ secrets.RELEASE_KEYSTORE_BASE64 != '' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -46,7 +51,7 @@ jobs:
       # (matches the previous behavior) -- the in-app updater just won't
       # have anything newer to offer until signing is set up.
       - name: Decode release keystore
-        if: ${{ secrets.RELEASE_KEYSTORE_BASE64 != '' }}
+        if: ${{ env.HAS_SIGNING == 'true' }}
         run: |
           echo "${{ secrets.RELEASE_KEYSTORE_BASE64 }}" | base64 -d > "${{ runner.temp }}/release.keystore"
           echo "RELEASE_KEYSTORE_PATH=${{ runner.temp }}/release.keystore" >> "$GITHUB_ENV"
@@ -71,7 +76,7 @@ jobs:
       # release APK attached -- this is what the app's in-app updater polls
       # via the GitHub API and downloads from.
       - name: Publish GitHub Release
-        if: ${{ secrets.RELEASE_KEYSTORE_BASE64 != '' }}
+        if: ${{ env.HAS_SIGNING == 'true' }}
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ github.run_number }}
