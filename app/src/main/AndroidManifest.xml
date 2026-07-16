@@ -28,5 +28,17 @@
             android:exported="false"
             android:theme="@style/Theme.RemotWRTBot" />
 
+        <service
+            android:name=".RemotFcmService"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.google.firebase.MESSAGING_EVENT" />
+            </intent-filter>
+        </service>
+
+        <receiver
+            android:name=".DeviceActionReceiver"
+            android:exported="false" />
+
     </application>
 </manifest>
