@@ -35,7 +35,7 @@ jobs:
           gradle-version: 8.7
 
       - name: Build debug APK
-        run: gradle assembleDebug --no-daemon
+        run: gradle assembleDebug -PverCode=${{ github.run_number }} --no-daemon
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
