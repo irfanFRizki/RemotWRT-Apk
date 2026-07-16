@@ -37,6 +37,10 @@ data class RemotbotStatus(
     val pkgVersion: String = "-",
 
     val myIp: String = "-",
+    val myIpIsp: String = "-",
+    val myIpCity: String = "-",
+    val myIpRegion: String = "-",
+    val myIpCountry: String = "-",
     val openclashEnabled: Boolean = false,
     val openclashRunning: Boolean = false,
     val cloudflaredEnabled: Boolean = false,

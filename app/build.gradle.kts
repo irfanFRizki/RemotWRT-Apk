@@ -12,14 +12,38 @@ android {
         applicationId = "com.remotwrt.bot"
         minSdk = 26
         targetSdk = 34
-        versionCode = 1
+        // Passed by CI as -PverCode=<github.run_number> so it always matches
+        // the GitHub Release tag (vN) the in-app updater compares against.
+        // Falls back to 1 for local/manual builds where that's not set.
+        versionCode = (project.findProperty("verCode") as String?)?.toIntOrNull() ?: 1
         versionName = "1.0.0"
+    }
+
+    // Populated from env vars that only exist in CI (set from the
+    // RELEASE_KEYSTORE_BASE64/RELEASE_KEYSTORE_PASSWORD/etc. repo secrets).
+    // Signing must be *consistent* across every release build -- if each
+    // build used a different (or the default auto-generated) key, Android
+    // would refuse to install an "update" over the existing app at all
+    // (signature mismatch), which would break the whole in-app updater.
+    val hasReleaseSigning = System.getenv("RELEASE_KEYSTORE_PATH") != null
+    if (hasReleaseSigning) {
+        signingConfigs {
+            create("release") {
+                storeFile = file(System.getenv("RELEASE_KEYSTORE_PATH")!!)
+                storePassword = System.getenv("RELEASE_KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("RELEASE_KEY_ALIAS")
+                keyPassword = System.getenv("RELEASE_KEY_PASSWORD")
+            }
+        }
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            if (hasReleaseSigning) {
+                signingConfig = signingConfigs.getByName("release")
+            }
         }
         debug {
             isDebuggable = true

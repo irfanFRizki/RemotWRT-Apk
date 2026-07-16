@@ -238,6 +238,8 @@ fun DashboardScreen(prefs: Prefs, onLogout: () -> Unit, onManageDevices: () -> U
                 Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(bottom = 12.dp))
             }
 
+            UpdateCard()
+
             val s = status
             if (s == null) {
                 Box(Modifier.fillMaxWidth().padding(top = 40.dp), contentAlignment = Alignment.Center) {
@@ -351,6 +353,92 @@ private fun DevicesCard(s: RemotbotStatus, onManageDevices: () -> Unit) {
     }
 }
 
+@Composable
+private fun UpdateCard() {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+
+    var updateInfo by remember { mutableStateOf<com.remotwrt.bot.update.UpdateInfo?>(null) }
+    var downloading by remember { mutableStateOf(false) }
+    var progress by remember { mutableStateOf(0f) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var needsPermission by remember { mutableStateOf(false) }
+
+    LaunchedEffect(Unit) {
+        withContext(Dispatchers.IO) {
+            try {
+                val info = com.remotwrt.bot.update.GithubUpdater().fetchLatestRelease()
+                if (info != null && info.versionCode > com.remotwrt.bot.BuildConfig.VERSION_CODE) {
+                    withContext(Dispatchers.Main) { updateInfo = info }
+                }
+            } catch (_: Exception) {
+                // Silent -- an update-check failure shouldn't nag the user every time
+                // the dashboard loads. They can still use everything else normally.
+            }
+        }
+    }
+
+    val info = updateInfo ?: return
+
+    InfoCard("Update Tersedia", Icons.Filled.SystemUpdate) {
+        Text("Versi baru ${info.versionTag} siap diunduh.", style = MaterialTheme.typography.bodyMedium)
+        if (info.releaseNotes.isNotBlank()) {
+            Spacer(Modifier.height(4.dp))
+            Text(
+                info.releaseNotes.take(300),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        Spacer(Modifier.height(10.dp))
+
+        error?.let {
+            Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+            Spacer(Modifier.height(6.dp))
+        }
+
+        if (downloading) {
+            if (progress in 0f..1f) {
+                LinearProgressIndicator(progress = progress, modifier = Modifier.fillMaxWidth())
+            } else {
+                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+            }
+        } else {
+            Button(
+                onClick = {
+                    if (!com.remotwrt.bot.update.UpdateInstaller.canInstallPackages(context)) {
+                        needsPermission = true
+                        com.remotwrt.bot.update.UpdateInstaller.requestInstallPermission(context)
+                        return@Button
+                    }
+                    error = null
+                    downloading = true
+                    scope.launch {
+                        try {
+                            val dir = java.io.File(context.cacheDir, "apk_updates").apply { mkdirs() }
+                            val dest = java.io.File(dir, "update-${info.versionTag}.apk")
+                            withContext(Dispatchers.IO) {
+                                com.remotwrt.bot.update.GithubUpdater().downloadApk(info.assetApiUrl, dest) { p ->
+                                    progress = p
+                                }
+                            }
+                            com.remotwrt.bot.update.UpdateInstaller.installApk(context, dest)
+                        } catch (e: Exception) {
+                            error = "Gagal update: ${e.message}"
+                        } finally {
+                            downloading = false
+                        }
+                    }
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(if (needsPermission) "Coba Lagi Setelah Izin Diberikan" else "Update Sekarang")
+            }
+        }
+    }
+    Spacer(Modifier.height(12.dp))
+}
+
 private fun formatUptime(seconds: Long): String {
     val days = seconds / 86400
     val hours = (seconds % 86400) / 3600
@@ -363,7 +451,7 @@ private fun MyIpCard(s: RemotbotStatus) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
 
-    InfoCard("Alamat IP Publik", Icons.Filled.Public) {
+    InfoCard("Informasi IP Publik", Icons.Filled.Public) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -381,6 +469,10 @@ private fun MyIpCard(s: RemotbotStatus) {
                 Icon(Icons.Filled.ContentCopy, contentDescription = "Salin IP")
             }
         }
+        Spacer(Modifier.height(4.dp))
+        StatRow("ISP", s.myIpIsp)
+        StatRow("Lokasi", listOf(s.myIpCity, s.myIpRegion).filter { it.isNotBlank() && it != "-" }.joinToString(", ").ifBlank { "-" })
+        StatRow("Negara", s.myIpCountry)
     }
 }
 
