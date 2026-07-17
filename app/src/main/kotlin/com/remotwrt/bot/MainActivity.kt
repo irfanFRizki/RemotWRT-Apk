@@ -238,8 +238,6 @@ fun DashboardScreen(prefs: Prefs, onLogout: () -> Unit, onManageDevices: () -> U
                 Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(bottom = 12.dp))
             }
 
-            UpdateCard()
-
             val s = status
             if (s == null) {
                 Box(Modifier.fillMaxWidth().padding(top = 40.dp), contentAlignment = Alignment.Center) {
@@ -259,6 +257,8 @@ fun DashboardScreen(prefs: Prefs, onLogout: () -> Unit, onManageDevices: () -> U
                 ServicesCard(s)
                 Spacer(Modifier.height(12.dp))
                 CommandsCard(prefs)
+                Spacer(Modifier.height(12.dp))
+                AppVersionCard()
             }
         }
     }
@@ -354,89 +354,128 @@ private fun DevicesCard(s: RemotbotStatus, onManageDevices: () -> Unit) {
 }
 
 @Composable
-private fun UpdateCard() {
+private fun AppVersionCard() {
     val context = androidx.compose.ui.platform.LocalContext.current
     val scope = androidx.compose.runtime.rememberCoroutineScope()
 
+    var checking by remember { mutableStateOf(true) }
     var updateInfo by remember { mutableStateOf<com.remotwrt.bot.update.UpdateInfo?>(null) }
+    var checkError by remember { mutableStateOf<String?>(null) }
     var downloading by remember { mutableStateOf(false) }
     var progress by remember { mutableStateOf(0f) }
-    var error by remember { mutableStateOf<String?>(null) }
+    var downloadError by remember { mutableStateOf<String?>(null) }
     var needsPermission by remember { mutableStateOf(false) }
+    var checkTrigger by remember { mutableStateOf(0) }
 
-    LaunchedEffect(Unit) {
+    LaunchedEffect(checkTrigger) {
+        checking = true
+        checkError = null
         withContext(Dispatchers.IO) {
             try {
                 val info = com.remotwrt.bot.update.GithubUpdater().fetchLatestRelease()
-                if (info != null && info.versionCode > com.remotwrt.bot.BuildConfig.VERSION_CODE) {
-                    withContext(Dispatchers.Main) { updateInfo = info }
+                withContext(Dispatchers.Main) {
+                    updateInfo = if (info != null && info.versionCode > com.remotwrt.bot.BuildConfig.VERSION_CODE) info else null
+                    checking = false
                 }
-            } catch (_: Exception) {
-                // Silent -- an update-check failure shouldn't nag the user every time
-                // the dashboard loads. They can still use everything else normally.
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    checkError = "Gagal cek update: ${e.message}"
+                    checking = false
+                }
             }
         }
     }
 
-    val info = updateInfo ?: return
+    InfoCard("Tentang Aplikasi", Icons.Filled.Info) {
+        StatRow("Versi", "${com.remotwrt.bot.BuildConfig.VERSION_NAME} (build ${com.remotwrt.bot.BuildConfig.VERSION_CODE})")
+        Spacer(Modifier.height(8.dp))
 
-    InfoCard("Update Tersedia", Icons.Filled.SystemUpdate) {
-        Text("Versi baru ${info.versionTag} siap diunduh.", style = MaterialTheme.typography.bodyMedium)
-        if (info.releaseNotes.isNotBlank()) {
-            Spacer(Modifier.height(4.dp))
-            Text(
-                info.releaseNotes.take(300),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-        Spacer(Modifier.height(10.dp))
-
-        error?.let {
-            Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
-            Spacer(Modifier.height(6.dp))
-        }
-
-        if (downloading) {
-            if (progress in 0f..1f) {
-                LinearProgressIndicator(progress = progress, modifier = Modifier.fillMaxWidth())
-            } else {
-                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+        when {
+            checking -> {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Memeriksa update...", style = MaterialTheme.typography.bodySmall)
+                }
             }
-        } else {
-            Button(
-                onClick = {
-                    if (!com.remotwrt.bot.update.UpdateInstaller.canInstallPackages(context)) {
-                        needsPermission = true
-                        com.remotwrt.bot.update.UpdateInstaller.requestInstallPermission(context)
-                        return@Button
+            checkError != null -> {
+                Text(checkError!!, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                Spacer(Modifier.height(6.dp))
+                OutlinedButton(onClick = { checkTrigger++ }, modifier = Modifier.fillMaxWidth()) { Text("Coba Lagi") }
+            }
+            updateInfo == null -> {
+                Text(
+                    "Sudah versi terbaru.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = com.remotwrt.bot.ui.theme.RemotGreen
+                )
+                Spacer(Modifier.height(6.dp))
+                OutlinedButton(onClick = { checkTrigger++ }, modifier = Modifier.fillMaxWidth()) { Text("Cek Update") }
+            }
+            else -> {
+                val info = updateInfo!!
+                Text(
+                    "Update tersedia: ${info.versionTag}",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Medium,
+                    color = com.remotwrt.bot.ui.theme.RemotAmber
+                )
+                if (info.releaseNotes.isNotBlank()) {
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        info.releaseNotes.take(300),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Spacer(Modifier.height(10.dp))
+
+                downloadError?.let {
+                    Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                    Spacer(Modifier.height(6.dp))
+                }
+
+                if (downloading) {
+                    if (progress in 0f..1f) {
+                        LinearProgressIndicator(progress = progress, modifier = Modifier.fillMaxWidth())
+                    } else {
+                        LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                     }
-                    error = null
-                    downloading = true
-                    scope.launch {
-                        try {
-                            val dir = java.io.File(context.cacheDir, "apk_updates").apply { mkdirs() }
-                            val dest = java.io.File(dir, "update-${info.versionTag}.apk")
-                            withContext(Dispatchers.IO) {
-                                com.remotwrt.bot.update.GithubUpdater().downloadApk(info.assetApiUrl, dest) { p ->
-                                    progress = p
+                } else {
+                    Button(
+                        onClick = {
+                            if (!com.remotwrt.bot.update.UpdateInstaller.canInstallPackages(context)) {
+                                needsPermission = true
+                                com.remotwrt.bot.update.UpdateInstaller.requestInstallPermission(context)
+                                return@Button
+                            }
+                            downloadError = null
+                            downloading = true
+                            scope.launch {
+                                try {
+                                    val dir = java.io.File(context.cacheDir, "apk_updates").apply { mkdirs() }
+                                    val dest = java.io.File(dir, "update-${info.versionTag}.apk")
+                                    withContext(Dispatchers.IO) {
+                                        com.remotwrt.bot.update.GithubUpdater().downloadApk(info.assetApiUrl, dest) { p ->
+                                            progress = p
+                                        }
+                                    }
+                                    com.remotwrt.bot.update.UpdateInstaller.installApk(context, dest)
+                                } catch (e: Exception) {
+                                    downloadError = "Gagal update: ${e.message}"
+                                } finally {
+                                    downloading = false
                                 }
                             }
-                            com.remotwrt.bot.update.UpdateInstaller.installApk(context, dest)
-                        } catch (e: Exception) {
-                            error = "Gagal update: ${e.message}"
-                        } finally {
-                            downloading = false
-                        }
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(if (needsPermission) "Coba Lagi Setelah Izin Diberikan" else "Update Sekarang")
                     }
-                },
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text(if (needsPermission) "Coba Lagi Setelah Izin Diberikan" else "Update Sekarang")
+                }
             }
         }
     }
-    Spacer(Modifier.height(12.dp))
 }
 
 private fun formatUptime(seconds: Long): String {
