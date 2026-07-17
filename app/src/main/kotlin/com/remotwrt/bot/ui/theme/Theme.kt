@@ -5,16 +5,20 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.graphics.Color
 
 private val DarkColors = darkColorScheme(
-    primary = RemotBlue,
+    primary = RemotTeal,
+    onPrimary = Color(0xFF00201C),
+    secondary = RemotTealBright,
     background = RemotBackground,
     surface = RemotSurface,
+    surfaceVariant = RemotSurfaceElevated,
     error = RemotRed
 )
 
 private val LightColors = lightColorScheme(
-    primary = RemotBlue,
+    primary = RemotTeal,
     error = RemotRed
 )
 
