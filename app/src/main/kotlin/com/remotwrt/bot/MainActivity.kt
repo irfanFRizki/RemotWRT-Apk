@@ -8,6 +8,11 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -18,6 +23,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -266,15 +273,43 @@ fun DashboardScreen(prefs: Prefs, onLogout: () -> Unit, onManageDevices: () -> U
 
 @Composable
 private fun InfoCard(title: String, icon: androidx.compose.ui.graphics.vector.ImageVector, content: @Composable ColumnScope.() -> Unit) {
+    var expanded by remember { mutableStateOf(false) }
+    val chevronRotation by animateFloatAsState(
+        targetValue = if (expanded) 180f else 0f,
+        animationSpec = tween(250),
+        label = "chevron_rotation"
+    )
+
     ElevatedCard(modifier = Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(16.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
+        Column(
+            Modifier
+                .padding(16.dp)
+                .animateContentSize()
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { expanded = !expanded },
+                verticalAlignment = Alignment.CenterVertically
+            ) {
                 Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
                 Spacer(Modifier.width(8.dp))
-                Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                Text(
+                    title,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.weight(1f)
+                )
+                Icon(
+                    Icons.Filled.ExpandMore,
+                    contentDescription = if (expanded) "Sembunyikan" else "Tampilkan",
+                    modifier = Modifier.rotate(chevronRotation)
+                )
             }
-            Spacer(Modifier.height(8.dp))
-            content()
+            if (expanded) {
+                Spacer(Modifier.height(8.dp))
+                content()
+            }
         }
     }
 }
@@ -308,15 +343,59 @@ private fun StatusCard(s: RemotbotStatus) {
 @Composable
 private fun ResourceCard(s: RemotbotStatus) {
     InfoCard("Sumber Daya", Icons.Filled.Memory) {
-        val cpuColor = if (s.cpuTemp != null && s.cpuTemp > s.cpuTempLimit) com.remotwrt.bot.ui.theme.RemotRed else Color.Unspecified
+        val cpuOver = s.cpuTemp != null && s.cpuTemp > s.cpuTempLimit
+        val cpuColor = if (cpuOver) com.remotwrt.bot.ui.theme.RemotRed else MaterialTheme.colorScheme.primary
+        val cpuFraction = if (s.cpuTemp != null && s.cpuTempLimit > 0)
+            (s.cpuTemp / s.cpuTempLimit).toFloat().coerceIn(0f, 1f) else 0f
+        val animatedCpuFraction by animateFloatAsState(
+            targetValue = cpuFraction, animationSpec = tween(600), label = "cpu_temp_bar"
+        )
         StatRow(
             "Suhu CPU",
             if (s.cpuTemp != null) "${s.cpuTemp}°C (batas ${s.cpuTempLimit}°C)" else "N/A",
-            cpuColor
+            if (cpuOver) com.remotwrt.bot.ui.theme.RemotRed else Color.Unspecified
         )
-        val ramColor = if (s.memPct > s.ramLimit) com.remotwrt.bot.ui.theme.RemotRed else Color.Unspecified
-        StatRow("RAM", "${s.memPct}% (${s.memUsedMb}/${s.memTotalMb} MB)", ramColor)
-        s.diskPct?.let { StatRow("Disk (overlay)", "$it%") }
+        LinearProgressIndicator(
+            progress = animatedCpuFraction,
+            color = cpuColor,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(6.dp)
+                .clip(RoundedCornerShape(3.dp))
+        )
+        Spacer(Modifier.height(10.dp))
+
+        val ramOver = s.memPct > s.ramLimit
+        val ramColor = if (ramOver) com.remotwrt.bot.ui.theme.RemotRed else MaterialTheme.colorScheme.primary
+        val animatedRamFraction by animateFloatAsState(
+            targetValue = (s.memPct / 100f).coerceIn(0f, 1f), animationSpec = tween(600), label = "ram_bar"
+        )
+        StatRow("RAM", "${s.memPct}% (${s.memUsedMb}/${s.memTotalMb} MB)", if (ramOver) com.remotwrt.bot.ui.theme.RemotRed else Color.Unspecified)
+        LinearProgressIndicator(
+            progress = animatedRamFraction,
+            color = ramColor,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(6.dp)
+                .clip(RoundedCornerShape(3.dp))
+        )
+        Spacer(Modifier.height(10.dp))
+
+        s.diskPct?.let { diskPct ->
+            val animatedDiskFraction by animateFloatAsState(
+                targetValue = (diskPct / 100f).coerceIn(0f, 1f), animationSpec = tween(600), label = "disk_bar"
+            )
+            StatRow("Disk (overlay)", "$diskPct%")
+            LinearProgressIndicator(
+                progress = animatedDiskFraction,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(6.dp)
+                    .clip(RoundedCornerShape(3.dp))
+            )
+            Spacer(Modifier.height(10.dp))
+        }
+
         StatRow("Load Average", s.load1)
         StatRow("Uptime", formatUptime(s.uptimeSec))
     }
