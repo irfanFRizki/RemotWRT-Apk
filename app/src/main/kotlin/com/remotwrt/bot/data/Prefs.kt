@@ -68,6 +68,16 @@ class Prefs(context: Context) {
         get() = prefs.getInt("last_blocked_count", 0)
         set(value) = prefs.edit().putInt("last_blocked_count", value).apply()
 
+    // ---- background auto-update: tracks an APK already downloaded by MonitorWorker ----
+
+    var downloadedUpdateVersionCode: Int
+        get() = prefs.getInt("downloaded_update_version_code", 0)
+        set(value) = prefs.edit().putInt("downloaded_update_version_code", value).apply()
+
+    var downloadedUpdateFilePath: String
+        get() = prefs.getString("downloaded_update_file_path", "") ?: ""
+        set(value) = prefs.edit().putString("downloaded_update_file_path", value).apply()
+
     var lastCpuAlert: Boolean
         get() = prefs.getBoolean("last_cpu_alert", false)
         set(value) = prefs.edit().putBoolean("last_cpu_alert", value).apply()

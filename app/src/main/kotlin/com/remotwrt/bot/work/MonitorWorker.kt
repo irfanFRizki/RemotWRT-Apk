@@ -13,6 +13,12 @@ class MonitorWorker(appContext: Context, params: WorkerParameters) :
 
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
         val prefs = Prefs(applicationContext)
+
+        // Update check/download runs regardless of whether LuCI is configured
+        // yet -- it's independent of the router entirely (just talks to
+        // GitHub), so it shouldn't be gated on router login state.
+        checkAndDownloadUpdate(prefs)
+
         if (!prefs.isConfigured) return@withContext Result.success()
 
         val status = try {
@@ -97,5 +103,39 @@ class MonitorWorker(appContext: Context, params: WorkerParameters) :
         prefs.lastRamAlert = ramOver
 
         Result.success()
+    }
+
+    /**
+     * Best-effort: checks GitHub for a newer release, and if one exists and
+     * hasn't already been downloaded, silently downloads its APK to the app
+     * cache dir and fires a one-tap "Install Sekarang" notification. Any
+     * failure here is swallowed -- this must never take down the rest of the
+     * periodic job over a flaky GitHub API call.
+     */
+    private suspend fun checkAndDownloadUpdate(prefs: com.remotwrt.bot.data.Prefs) {
+        try {
+            val updater = com.remotwrt.bot.update.GithubUpdater()
+            val info = updater.fetchLatestRelease() ?: return
+
+            if (info.versionCode <= com.remotwrt.bot.BuildConfig.VERSION_CODE) return
+
+            // Already downloaded this exact version in a previous run -- the
+            // notification was already shown, don't repeat the download or
+            // spam another notification every 15 minutes.
+            val alreadyDownloaded = prefs.downloadedUpdateVersionCode == info.versionCode &&
+                java.io.File(prefs.downloadedUpdateFilePath).exists()
+            if (alreadyDownloaded) return
+
+            val dir = java.io.File(applicationContext.cacheDir, "apk_updates").apply { mkdirs() }
+            val dest = java.io.File(dir, "update-${info.versionTag}.apk")
+            updater.downloadApk(info.assetApiUrl, dest) { /* no UI to report progress to here */ }
+
+            prefs.downloadedUpdateVersionCode = info.versionCode
+            prefs.downloadedUpdateFilePath = dest.absolutePath
+
+            NotificationHelper.notifyUpdateReady(applicationContext, info.versionTag, dest)
+        } catch (_: Exception) {
+            // Network hiccup, GitHub rate limit, etc -- just try again next cycle.
+        }
     }
 }

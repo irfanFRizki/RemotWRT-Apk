@@ -603,12 +603,27 @@ private fun AppVersionCard() {
             }
             else -> {
                 val info = updateInfo!!
+                val prefs = remember { com.remotwrt.bot.data.Prefs(context) }
+                val alreadyDownloadedFile = remember(info.versionCode) {
+                    if (prefs.downloadedUpdateVersionCode == info.versionCode) {
+                        val f = java.io.File(prefs.downloadedUpdateFilePath)
+                        if (f.exists()) f else null
+                    } else null
+                }
                 Text(
                     "Update tersedia: ${info.versionTag}",
                     style = MaterialTheme.typography.bodyMedium,
                     fontWeight = FontWeight.Medium,
                     color = com.remotwrt.bot.ui.theme.RemotAmber
                 )
+                if (alreadyDownloadedFile != null) {
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        "Sudah diunduh otomatis di background, tinggal dipasang.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = com.remotwrt.bot.ui.theme.RemotGreen
+                    )
+                }
                 if (info.releaseNotes.isNotBlank()) {
                     Spacer(Modifier.height(4.dp))
                     Text(
@@ -638,6 +653,10 @@ private fun AppVersionCard() {
                                 com.remotwrt.bot.update.UpdateInstaller.requestInstallPermission(context)
                                 return@Button
                             }
+                            if (alreadyDownloadedFile != null) {
+                                com.remotwrt.bot.update.UpdateInstaller.installApk(context, alreadyDownloadedFile)
+                                return@Button
+                            }
                             downloadError = null
                             downloading = true
                             scope.launch {
@@ -659,7 +678,13 @@ private fun AppVersionCard() {
                         },
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Text(if (needsPermission) "Coba Lagi Setelah Izin Diberikan" else "Update Sekarang")
+                        Text(
+                            when {
+                                needsPermission -> "Coba Lagi Setelah Izin Diberikan"
+                                alreadyDownloadedFile != null -> "Install Sekarang"
+                                else -> "Update Sekarang"
+                            }
+                        )
                     }
                 }
             }

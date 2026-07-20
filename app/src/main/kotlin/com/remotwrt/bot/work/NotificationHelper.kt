@@ -51,4 +51,33 @@ object NotificationHelper {
 
         NotificationManagerCompat.from(context).notify(id, notification)
     }
+
+    /**
+     * Shown once MonitorWorker has finished silently downloading a newer APK
+     * in the background. Tapping the action button installs it immediately --
+     * the one tap Android requires from any non-privileged app (there's no way
+     * to skip this system confirmation without root/Device Owner status).
+     */
+    fun notifyUpdateReady(context: Context, versionTag: String, apkFile: java.io.File) {
+        ensureChannel(context)
+
+        val installIntent = Intent(context, com.remotwrt.bot.update.UpdateInstallReceiver::class.java).apply {
+            putExtra(com.remotwrt.bot.update.UpdateInstallReceiver.EXTRA_APK_PATH, apkFile.absolutePath)
+        }
+        val installPendingIntent = PendingIntent.getBroadcast(
+            context, 2001, installIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val notification = NotificationCompat.Builder(context, CHANNEL_ID)
+            .setSmallIcon(android.R.drawable.stat_sys_download_done)
+            .setContentTitle("Update $versionTag Siap Dipasang")
+            .setContentText("Sudah diunduh otomatis di background. Tap tombol untuk pasang sekarang.")
+            .setAutoCancel(true)
+            .addAction(0, "Install Sekarang", installPendingIntent)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .build()
+
+        NotificationManagerCompat.from(context).notify(2001, notification)
+    }
 }
