@@ -43,6 +43,7 @@ class LuciClient(private val prefs: Prefs) {
     private fun deviceActionUrl() = "${prefs.baseUrl}/cgi-bin/luci/admin/services/remotbot/device_action"
     private fun registerFcmUrl() = "${prefs.baseUrl}/cgi-bin/luci/admin/services/remotbot/register_fcm"
     private fun commandsUrl() = "${prefs.baseUrl}/cgi-bin/luci/admin/services/remotbot/commands"
+    private fun namedDevicesUrl() = "${prefs.baseUrl}/cgi-bin/luci/admin/services/remotbot/named_devices"
     private fun runCommandUrl() = "${prefs.baseUrl}/cgi-bin/luci/admin/services/remotbot/run_command"
     private fun loginUrl() = "${prefs.baseUrl}/cgi-bin/luci/"
 
@@ -199,6 +200,25 @@ class LuciClient(private val prefs: Prefs) {
      * device detected) instead of the app having to wait for its next
      * background poll.
      */
+    /** Fetches vpn.html's custom-named devices, cross-referenced with live online status. */
+    fun fetchNamedDevices(): List<NamedDeviceInfo> {
+        val json = withSession { getRaw(namedDevicesUrl()) }
+        if (!json.optBoolean("ok", false)) {
+            throw LuciActionException(json.optString("error", "Gagal memuat perangkat"))
+        }
+        val arr: JSONArray = json.optJSONArray("devices") ?: JSONArray()
+        return (0 until arr.length()).map { i ->
+            val d = arr.getJSONObject(i)
+            NamedDeviceInfo(
+                ip = d.optString("ip", "-"),
+                name = d.optString("name", "-"),
+                icon = d.optString("icon", "📱"),
+                online = d.optBoolean("online", false),
+                status = d.optString("status", "TIDAK TERHUBUNG")
+            )
+        }
+    }
+
     fun registerFcmToken(token: String) {
         val form = FormBody.Builder()
             .add("token", token)

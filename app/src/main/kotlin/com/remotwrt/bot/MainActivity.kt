@@ -283,7 +283,9 @@ fun DashboardScreen(prefs: Prefs, onLogout: () -> Unit, onManageDevices: () -> U
                 Spacer(Modifier.height(12.dp))
                 StaggeredEntry(6) { CommandsCard(prefs) }
                 Spacer(Modifier.height(12.dp))
-                StaggeredEntry(7) { AppVersionCard() }
+                StaggeredEntry(7) { NamedDevicesCard(prefs) }
+                Spacer(Modifier.height(12.dp))
+                StaggeredEntry(8) { AppVersionCard() }
             }
         }
     }
@@ -751,6 +753,92 @@ private fun ServicesCard(s: RemotbotStatus) {
     InfoCard("Layanan", Icons.Filled.Dns) {
         ServiceRow("OpenClash", s.openclashEnabled, s.openclashRunning)
         ServiceRow("Cloudflared", s.cloudflaredEnabled, s.cloudflaredRunning)
+    }
+}
+
+@Composable
+private fun NamedDevicesCard(prefs: Prefs) {
+    var devices by remember { mutableStateOf<List<com.remotwrt.bot.data.NamedDeviceInfo>?>(null) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var refreshTick by remember { mutableStateOf(0) }
+
+    LaunchedEffect(refreshTick) {
+        withContext(Dispatchers.IO) {
+            try {
+                val result = LuciClient(prefs).fetchNamedDevices()
+                withContext(Dispatchers.Main) {
+                    devices = result
+                    error = null
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) { error = "Gagal memuat: ${e.message}" }
+            }
+        }
+    }
+
+    InfoCard("Nama Perangkat Online", Icons.Filled.Devices) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            val list = devices
+            val onlineCount = list?.count { it.online } ?: 0
+            Text(
+                if (list != null) "$onlineCount dari ${list.size} online" else "Memuat...",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            IconButton(onClick = { refreshTick++ }, modifier = Modifier.size(28.dp)) {
+                Icon(Icons.Filled.Refresh, contentDescription = "Refresh", modifier = Modifier.size(18.dp))
+            }
+        }
+
+        error?.let {
+            Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+        }
+
+        val list = devices
+        if (list == null && error == null) {
+            Box(Modifier.fillMaxWidth().padding(vertical = 8.dp), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+            }
+        } else if (list != null && list.isEmpty()) {
+            Text(
+                "Belum ada perangkat terdaftar. Tambahkan lewat halaman vpn.html (tab Perangkat).",
+                style = MaterialTheme.typography.bodySmall
+            )
+        } else if (list != null) {
+            Spacer(Modifier.height(4.dp))
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                list.forEach { device ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(device.icon, style = MaterialTheme.typography.bodyLarge)
+                            Spacer(Modifier.width(8.dp))
+                            Column {
+                                Text(device.name, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+                                Text(
+                                    device.ip,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                        StatusPill(
+                            if (device.online) "Online" else "Offline",
+                            if (device.online) com.remotwrt.bot.ui.theme.RemotGreen else MaterialTheme.colorScheme.onSurfaceVariant,
+                            pulsing = device.online
+                        )
+                    }
+                }
+            }
+        }
     }
 }
 
