@@ -756,6 +756,17 @@ private fun ServicesCard(s: RemotbotStatus) {
     }
 }
 
+private data class CategoryMeta(val key: String, val icon: String, val color: Color)
+
+// Same colors as vpn.html's --social/--game/--shopping/--streaming CSS vars,
+// so the badges look consistent with the web dashboard.
+private val CATEGORY_META = listOf(
+    CategoryMeta("social", "💬", Color(0xFF818CF8)),
+    CategoryMeta("game", "🎮", Color(0xFF4ADE80)),
+    CategoryMeta("shopping", "🛒", Color(0xFFC084FC)),
+    CategoryMeta("streaming", "📺", Color(0xFFFB923C))
+)
+
 @Composable
 private fun NamedDevicesCard(prefs: Prefs) {
     var devices by remember { mutableStateOf<List<com.remotwrt.bot.data.NamedDeviceInfo>?>(null) }
@@ -783,9 +794,8 @@ private fun NamedDevicesCard(prefs: Prefs) {
             verticalAlignment = Alignment.CenterVertically
         ) {
             val list = devices
-            val onlineCount = list?.count { it.online } ?: 0
             Text(
-                if (list != null) "$onlineCount dari ${list.size} online" else "Memuat...",
+                if (list != null) "${list.size} perangkat online" else "Memuat...",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -805,36 +815,55 @@ private fun NamedDevicesCard(prefs: Prefs) {
             }
         } else if (list != null && list.isEmpty()) {
             Text(
-                "Belum ada perangkat terdaftar. Tambahkan lewat halaman vpn.html (tab Perangkat).",
+                "Tidak ada perangkat terdaftar yang online saat ini.",
                 style = MaterialTheme.typography.bodySmall
             )
         } else if (list != null) {
             Spacer(Modifier.height(4.dp))
-            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 list.forEach { device ->
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(device.icon, style = MaterialTheme.typography.bodyLarge)
-                            Spacer(Modifier.width(8.dp))
-                            Column {
-                                Text(device.name, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
-                                Text(
-                                    device.ip,
-                                    style = MaterialTheme.typography.labelSmall,
-                                    fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(device.icon, style = MaterialTheme.typography.bodyLarge)
+                                Spacer(Modifier.width(8.dp))
+                                Column {
+                                    Text(device.name, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+                                    Text(
+                                        device.ip,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                            StatusPill("Online", com.remotwrt.bot.ui.theme.RemotGreen, pulsing = true)
+                        }
+
+                        val activeCats = CATEGORY_META.filter { (device.categories[it.key] ?: 0) > 0 }
+                        if (activeCats.isNotEmpty()) {
+                            Spacer(Modifier.height(6.dp))
+                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                activeCats.forEach { meta ->
+                                    val count = device.categories[meta.key] ?: 0
+                                    Surface(
+                                        color = meta.color.copy(alpha = 0.15f),
+                                        contentColor = meta.color,
+                                        shape = MaterialTheme.shapes.small
+                                    ) {
+                                        Text(
+                                            "${meta.icon} $count",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                        )
+                                    }
+                                }
                             }
                         }
-                        StatusPill(
-                            if (device.online) "Online" else "Offline",
-                            if (device.online) com.remotwrt.bot.ui.theme.RemotGreen else MaterialTheme.colorScheme.onSurfaceVariant,
-                            pulsing = device.online
-                        )
                     }
                 }
             }

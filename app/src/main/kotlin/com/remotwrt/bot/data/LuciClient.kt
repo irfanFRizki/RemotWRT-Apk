@@ -209,12 +209,16 @@ class LuciClient(private val prefs: Prefs) {
         val arr: JSONArray = json.optJSONArray("devices") ?: JSONArray()
         return (0 until arr.length()).map { i ->
             val d = arr.getJSONObject(i)
+            val catObj = d.optJSONObject("categories")
+            val categories = mutableMapOf<String, Int>()
+            catObj?.keys()?.forEach { key -> categories[key] = catObj.optInt(key, 0) }
             NamedDeviceInfo(
                 ip = d.optString("ip", "-"),
                 name = d.optString("name", "-"),
                 icon = d.optString("icon", "📱"),
                 online = d.optBoolean("online", false),
-                status = d.optString("status", "TIDAK TERHUBUNG")
+                status = d.optString("status", "TIDAK TERHUBUNG"),
+                categories = categories
             )
         }
     }
