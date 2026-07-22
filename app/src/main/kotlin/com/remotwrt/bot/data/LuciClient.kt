@@ -210,8 +210,17 @@ class LuciClient(private val prefs: Prefs) {
         return (0 until arr.length()).map { i ->
             val d = arr.getJSONObject(i)
             val catObj = d.optJSONObject("categories")
-            val categories = mutableMapOf<String, Int>()
-            catObj?.keys()?.forEach { key -> categories[key] = catObj.optInt(key, 0) }
+            val categories = mutableMapOf<String, List<AppUsage>>()
+            catObj?.keys()?.forEach { key ->
+                val appsArr = catObj.optJSONArray(key)
+                if (appsArr != null) {
+                    val apps = (0 until appsArr.length()).map { j ->
+                        val a = appsArr.getJSONObject(j)
+                        AppUsage(name = a.optString("name", "-"), count = a.optInt("count", 0))
+                    }
+                    categories[key] = apps
+                }
+            }
             NamedDeviceInfo(
                 ip = d.optString("ip", "-"),
                 name = d.optString("name", "-"),

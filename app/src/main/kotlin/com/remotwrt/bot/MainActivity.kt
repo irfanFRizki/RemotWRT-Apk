@@ -844,19 +844,25 @@ private fun NamedDevicesCard(prefs: Prefs) {
                             StatusPill("Online", com.remotwrt.bot.ui.theme.RemotGreen, pulsing = true)
                         }
 
-                        val activeCats = CATEGORY_META.filter { (device.categories[it.key] ?: 0) > 0 }
+                        val activeCats = CATEGORY_META.filter { !device.categories[it.key].isNullOrEmpty() }
                         if (activeCats.isNotEmpty()) {
                             Spacer(Modifier.height(6.dp))
-                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
                                 activeCats.forEach { meta ->
-                                    val count = device.categories[meta.key] ?: 0
+                                    val apps = device.categories[meta.key].orEmpty()
+                                    val topApp = apps.firstOrNull()?.name ?: meta.key
+                                    val extraCount = apps.size - 1
+                                    val label = if (extraCount > 0) "${meta.icon} $topApp +$extraCount" else "${meta.icon} $topApp"
                                     Surface(
                                         color = meta.color.copy(alpha = 0.15f),
                                         contentColor = meta.color,
                                         shape = MaterialTheme.shapes.small
                                     ) {
                                         Text(
-                                            "${meta.icon} $count",
+                                            label,
                                             style = MaterialTheme.typography.labelSmall,
                                             modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
                                         )
