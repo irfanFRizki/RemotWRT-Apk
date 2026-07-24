@@ -13,6 +13,7 @@ import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.*
@@ -32,6 +33,8 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
@@ -70,28 +73,23 @@ class MainActivity : ComponentActivity() {
             RemotWRTBotTheme {
                 Surface(modifier = Modifier.fillMaxSize()) {
                     var screen by remember {
-                        mutableStateOf(if (prefs.isConfigured) Screen.DASHBOARD else Screen.SETUP)
+                        mutableStateOf(if (prefs.isConfigured) Screen.MAIN else Screen.SETUP)
                     }
                     when (screen) {
                         Screen.SETUP -> SetupScreen(
                             prefs = prefs,
                             onLoggedIn = {
                                 MonitorScheduler.start(this@MainActivity)
-                                screen = Screen.DASHBOARD
+                                screen = Screen.MAIN
                             }
                         )
-                        Screen.DASHBOARD -> DashboardScreen(
+                        Screen.MAIN -> MainScaffold(
                             prefs = prefs,
                             onLogout = {
                                 MonitorScheduler.stop(this@MainActivity)
                                 prefs.clear()
                                 screen = Screen.SETUP
-                            },
-                            onManageDevices = { screen = Screen.DEVICES }
-                        )
-                        Screen.DEVICES -> DevicesScreen(
-                            prefs = prefs,
-                            onBack = { screen = Screen.DASHBOARD }
+                            }
                         )
                     }
                 }
@@ -100,7 +98,111 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private enum class Screen { SETUP, DASHBOARD, DEVICES }
+private enum class Screen { SETUP, MAIN }
+
+private enum class BottomTab { HOME, DEVICES, TERMINAL, SETTINGS }
+
+@Composable
+private fun MainScaffold(prefs: Prefs, onLogout: () -> Unit) {
+    var tab by remember { mutableStateOf(BottomTab.HOME) }
+
+    Scaffold(
+        topBar = { AppHeader(tab, prefs) },
+        bottomBar = { AppBottomNav(current = tab, onSelect = { tab = it }) }
+    ) { padding ->
+        Box(modifier = Modifier.padding(padding).fillMaxSize()) {
+            when (tab) {
+                BottomTab.HOME -> HomeTabContent(prefs, onManageDevices = { tab = BottomTab.DEVICES })
+                BottomTab.DEVICES -> DevicesTabContent(prefs)
+                BottomTab.TERMINAL -> TerminalTabContent(prefs)
+                BottomTab.SETTINGS -> SettingsTabContent(prefs, onLogout = onLogout)
+            }
+        }
+    }
+}
+
+@Composable
+private fun AppHeader(tab: BottomTab, prefs: Prefs) {
+    val (title, subtitleFallback) = when (tab) {
+        BottomTab.HOME -> "RemotWRT Bot" to "Aman"
+        BottomTab.DEVICES -> "Perangkat Jaringan" to "Kelola Device"
+        BottomTab.TERMINAL -> "Web Terminal" to "Akses via Browser"
+        BottomTab.SETTINGS -> "Preferensi" to "Konfigurasi Aplikasi"
+    }
+    val domain = remember(prefs.baseUrl) {
+        prefs.baseUrl.removePrefix("https://").removePrefix("http://").trimEnd('/')
+    }
+    Surface(color = MaterialTheme.colorScheme.background) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .statusBarsPadding()
+                .padding(horizontal = 20.dp, vertical = 16.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column {
+                Text(title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(2.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        Icons.Filled.Cloud,
+                        contentDescription = null,
+                        tint = com.remotwrt.bot.ui.theme.RemotIndigoLight,
+                        modifier = Modifier.size(12.dp)
+                    )
+                    Spacer(Modifier.width(4.dp))
+                    PulseDot(color = com.remotwrt.bot.ui.theme.RemotGreen, size = 6.dp)
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        if (tab == BottomTab.HOME && domain.isNotBlank()) "$domain • $subtitleFallback" else subtitleFallback,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .clip(androidx.compose.foundation.shape.CircleShape)
+                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(Icons.Filled.Wifi, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+            }
+        }
+    }
+}
+
+@Composable
+private fun AppBottomNav(current: BottomTab, onSelect: (BottomTab) -> Unit) {
+    NavigationBar {
+        NavigationBarItem(
+            selected = current == BottomTab.HOME,
+            onClick = { onSelect(BottomTab.HOME) },
+            icon = { Icon(Icons.Filled.Home, contentDescription = null) },
+            label = { Text("Home") }
+        )
+        NavigationBarItem(
+            selected = current == BottomTab.DEVICES,
+            onClick = { onSelect(BottomTab.DEVICES) },
+            icon = { Icon(Icons.Filled.Devices, contentDescription = null) },
+            label = { Text("Devices") }
+        )
+        NavigationBarItem(
+            selected = current == BottomTab.TERMINAL,
+            onClick = { onSelect(BottomTab.TERMINAL) },
+            icon = { Icon(Icons.Filled.Terminal, contentDescription = null) },
+            label = { Text("Terminal") }
+        )
+        NavigationBarItem(
+            selected = current == BottomTab.SETTINGS,
+            onClick = { onSelect(BottomTab.SETTINGS) },
+            icon = { Icon(Icons.Filled.Settings, contentDescription = null) },
+            label = { Text("Settings") }
+        )
+    }
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -192,16 +294,14 @@ fun SetupScreen(prefs: Prefs, onLoggedIn: () -> Unit) {
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+
 @Composable
-fun DashboardScreen(prefs: Prefs, onLogout: () -> Unit, onManageDevices: () -> Unit) {
-    val context = androidx.compose.ui.platform.LocalContext.current
+private fun HomeTabContent(prefs: Prefs, onManageDevices: () -> Unit) {
     var status by remember { mutableStateOf<RemotbotStatus?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     var refreshTick by remember { mutableStateOf(0) }
-    var lastUpdated by remember { mutableStateOf<Long?>(null) }
 
-    // Auto-refresh every 10s while the dashboard is on screen.
+    // Auto-refresh every 10s while Home is on screen.
     LaunchedEffect(refreshTick) {
         while (true) {
             withContext(Dispatchers.IO) {
@@ -210,7 +310,6 @@ fun DashboardScreen(prefs: Prefs, onLogout: () -> Unit, onManageDevices: () -> U
                     withContext(Dispatchers.Main) {
                         status = result
                         error = null
-                        lastUpdated = System.currentTimeMillis()
                     }
                 } catch (e: Exception) {
                     withContext(Dispatchers.Main) { error = "Gagal memuat status: ${e.message}" }
@@ -220,73 +319,229 @@ fun DashboardScreen(prefs: Prefs, onLogout: () -> Unit, onManageDevices: () -> U
         }
     }
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = {
-                    Column {
-                        Text("RemotWRT Bot")
-                        lastUpdated?.let {
-                            val fmt = remember { java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault()) }
-                            Text(
-                                "Update terakhir: ${fmt.format(java.util.Date(it))}",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(16.dp)
+    ) {
+        error?.let {
+            Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(bottom = 12.dp))
+        }
+
+        val s = status
+        if (s == null) {
+            Box(Modifier.fillMaxWidth().padding(top = 40.dp), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator()
+            }
+        } else {
+            StaggeredEntry(0) { TrafficHeroCard(s) }
+            Spacer(Modifier.height(12.dp))
+            StaggeredEntry(1) { QuickStatsGrid(s) }
+            Spacer(Modifier.height(16.dp))
+            StaggeredEntry(2) { StatusCard(s) }
+            Spacer(Modifier.height(12.dp))
+            StaggeredEntry(3) { ResourceCard(s) }
+            Spacer(Modifier.height(12.dp))
+            StaggeredEntry(4) { NetworkCard(s) }
+            Spacer(Modifier.height(12.dp))
+            StaggeredEntry(5) { DevicesCard(s, onManageDevices) }
+            Spacer(Modifier.height(12.dp))
+            StaggeredEntry(6) { MyIpCard(s) }
+            Spacer(Modifier.height(12.dp))
+            StaggeredEntry(7) { ServicesCard(s) }
+            Spacer(Modifier.height(12.dp))
+            StaggeredEntry(8) { CommandsCard(prefs) }
+            Spacer(Modifier.height(12.dp))
+            StaggeredEntry(9) { NamedDevicesCard(prefs) }
+            Spacer(Modifier.height(12.dp))
+            StaggeredEntry(10) { AppVersionCard() }
+        }
+    }
+}
+
+private fun formatBytes(bytes: Long): String {
+    if (bytes <= 0) return "0 B"
+    val units = arrayOf("B", "KB", "MB", "GB", "TB")
+    var value = bytes.toDouble()
+    var idx = 0
+    while (value >= 1024 && idx < units.size - 1) {
+        value /= 1024
+        idx++
+    }
+    return String.format(java.util.Locale.getDefault(), "%.1f %s", value, units[idx])
+}
+
+private fun formatRate(bytesPerSec: Double): String {
+    val bitsPerSec = bytesPerSec * 8
+    return when {
+        bitsPerSec >= 1_000_000 -> String.format(java.util.Locale.getDefault(), "%.1f Mbps", bitsPerSec / 1_000_000)
+        bitsPerSec >= 1_000 -> String.format(java.util.Locale.getDefault(), "%.1f Kbps", bitsPerSec / 1_000)
+        else -> String.format(java.util.Locale.getDefault(), "%.0f bps", bitsPerSec)
+    }
+}
+
+@Composable
+private fun TrafficHeroCard(s: RemotbotStatus) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(20.dp))
+            .background(
+                Brush.linearGradient(
+                    colors = listOf(
+                        com.remotwrt.bot.ui.theme.RemotIndigoDark,
+                        MaterialTheme.colorScheme.surface
+                    )
+                )
+            )
+            .border(1.dp, com.remotwrt.bot.ui.theme.RemotIndigo.copy(alpha = 0.35f), RoundedCornerShape(20.dp))
+            .padding(20.dp)
+    ) {
+        Column {
+            Text(
+                "Real-time Traffic",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(Modifier.height(14.dp))
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Column {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            Icons.Filled.ArrowDownward, contentDescription = null,
+                            tint = com.remotwrt.bot.ui.theme.RemotGreen, modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(Modifier.width(4.dp))
+                        Text("Download", style = MaterialTheme.typography.bodySmall)
                     }
-                },
-                actions = {
-                    IconButton(onClick = { refreshTick++ }) {
-                        Icon(Icons.Filled.Refresh, contentDescription = "Refresh")
+                    Spacer(Modifier.height(4.dp))
+                    Text(formatRate(s.netRxRateBps), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                    Text(
+                        "${formatBytes(s.netRxBytes)} total",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Box(
+                    modifier = Modifier
+                        .width(1.dp)
+                        .height(48.dp)
+                        .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.15f))
+                )
+                Column(horizontalAlignment = Alignment.End) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Upload", style = MaterialTheme.typography.bodySmall)
+                        Spacer(Modifier.width(4.dp))
+                        Icon(
+                            Icons.Filled.ArrowUpward, contentDescription = null,
+                            tint = com.remotwrt.bot.ui.theme.RemotIndigoLight, modifier = Modifier.size(16.dp)
+                        )
                     }
-                    IconButton(onClick = {
-                        context.startActivity(Intent(context, WebViewActivity::class.java))
-                    }) {
-                        Icon(Icons.Filled.Settings, contentDescription = "Pengaturan")
-                    }
-                    IconButton(onClick = onLogout) {
-                        Icon(Icons.Filled.Logout, contentDescription = "Logout")
+                    Spacer(Modifier.height(4.dp))
+                    Text(formatRate(s.netTxRateBps), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                    Text(
+                        "${formatBytes(s.netTxBytes)} total",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun QuickStatCard(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    value: String,
+    badge: String?,
+    progress: Float?,
+    progressColor: Color,
+    modifier: Modifier = Modifier
+) {
+    ElevatedCard(modifier = modifier) {
+        Column(Modifier.padding(14.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.Top
+            ) {
+                Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(20.dp))
+                badge?.let {
+                    Surface(
+                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
+                        contentColor = MaterialTheme.colorScheme.primary,
+                        shape = MaterialTheme.shapes.small
+                    ) {
+                        Text(it, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp))
                     }
                 }
+            }
+            Spacer(Modifier.height(10.dp))
+            Text(label, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(value, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+            progress?.let {
+                Spacer(Modifier.height(8.dp))
+                LinearProgressIndicator(
+                    progress = it.coerceIn(0f, 1f),
+                    color = progressColor,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(4.dp)
+                        .clip(RoundedCornerShape(2.dp))
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun QuickStatsGrid(s: RemotbotStatus) {
+    Column {
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            val cpuOver = s.cpuTemp != null && s.cpuTemp > s.cpuTempLimit
+            QuickStatCard(
+                icon = Icons.Filled.Memory,
+                label = "CPU Usage",
+                value = if (s.cpuTemp != null) "${s.cpuTemp}\u00B0C" else "N/A",
+                badge = "Load ${s.load1}",
+                progress = if (s.cpuTemp != null && s.cpuTempLimit > 0) (s.cpuTemp / s.cpuTempLimit).toFloat() else null,
+                progressColor = if (cpuOver) com.remotwrt.bot.ui.theme.RemotRed else MaterialTheme.colorScheme.primary,
+                modifier = Modifier.weight(1f)
+            )
+            val ramOver = s.memPct > s.ramLimit
+            QuickStatCard(
+                icon = Icons.Filled.Storage,
+                label = "RAM Usage",
+                value = "${s.memPct}%",
+                badge = "${(s.memTotalMb - s.memUsedMb).coerceAtLeast(0)}MB Free",
+                progress = s.memPct / 100f,
+                progressColor = if (ramOver) com.remotwrt.bot.ui.theme.RemotRed else MaterialTheme.colorScheme.primary,
+                modifier = Modifier.weight(1f)
             )
         }
-    ) { padding ->
-        Column(
-            modifier = Modifier
-                .padding(padding)
-                .fillMaxSize()
-                .verticalScroll(rememberScrollState())
-                .padding(16.dp)
-        ) {
-            error?.let {
-                Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(bottom = 12.dp))
-            }
-
-            val s = status
-            if (s == null) {
-                Box(Modifier.fillMaxWidth().padding(top = 40.dp), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator()
-                }
-            } else {
-                StaggeredEntry(0) { StatusCard(s) }
-                Spacer(Modifier.height(12.dp))
-                StaggeredEntry(1) { ResourceCard(s) }
-                Spacer(Modifier.height(12.dp))
-                StaggeredEntry(2) { NetworkCard(s) }
-                Spacer(Modifier.height(12.dp))
-                StaggeredEntry(3) { DevicesCard(s, onManageDevices) }
-                Spacer(Modifier.height(12.dp))
-                StaggeredEntry(4) { MyIpCard(s) }
-                Spacer(Modifier.height(12.dp))
-                StaggeredEntry(5) { ServicesCard(s) }
-                Spacer(Modifier.height(12.dp))
-                StaggeredEntry(6) { CommandsCard(prefs) }
-                Spacer(Modifier.height(12.dp))
-                StaggeredEntry(7) { NamedDevicesCard(prefs) }
-                Spacer(Modifier.height(12.dp))
-                StaggeredEntry(8) { AppVersionCard() }
-            }
+        Spacer(Modifier.height(12.dp))
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            QuickStatCard(
+                icon = Icons.Filled.Thermostat,
+                label = "Temperature",
+                value = if (s.cpuTemp != null) "${s.cpuTemp}\u00B0C" else "N/A",
+                badge = null,
+                progress = null,
+                progressColor = Color.Unspecified,
+                modifier = Modifier.weight(1f)
+            )
+            QuickStatCard(
+                icon = Icons.Filled.Schedule,
+                label = "Uptime",
+                value = formatUptime(s.uptimeSec),
+                badge = null,
+                progress = null,
+                progressColor = Color.Unspecified,
+                modifier = Modifier.weight(1f)
+            )
         }
     }
 }
@@ -992,7 +1247,7 @@ private enum class DeviceTab(val label: String) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun DevicesScreen(prefs: Prefs, onBack: () -> Unit) {
+fun DevicesTabContent(prefs: Prefs) {
     var devices by remember { mutableStateOf<List<DeviceInfo>?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     var refreshTick by remember { mutableStateOf(0) }
@@ -1049,24 +1304,17 @@ fun DevicesScreen(prefs: Prefs, onBack: () -> Unit) {
         }
     }
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text("Kelola Device") },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Kembali")
-                    }
-                },
-                actions = {
-                    IconButton(onClick = { refreshTick++ }) {
-                        Icon(Icons.Filled.Refresh, contentDescription = "Refresh")
-                    }
-                }
-            )
+    Column(modifier = Modifier.fillMaxSize()) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text("Kelola Device", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            IconButton(onClick = { refreshTick++ }) {
+                Icon(Icons.Filled.Refresh, contentDescription = "Refresh")
+            }
         }
-    ) { padding ->
-        Column(modifier = Modifier.padding(padding).fillMaxSize()) {
             TabRow(selectedTabIndex = tab.ordinal) {
                 DeviceTab.entries.forEach { t ->
                     Tab(
@@ -1112,7 +1360,6 @@ fun DevicesScreen(prefs: Prefs, onBack: () -> Unit) {
             }
         }
     }
-}
 
 private fun emptyMessageFor(tab: DeviceTab): String = when (tab) {
     DeviceTab.ONLINE -> "Tidak ada device yang online saat ini."
@@ -1261,5 +1508,269 @@ private fun DeviceRow(
                 }
             }
         }
+    }
+}
+
+// ==================== Terminal tab ====================
+
+@Composable
+fun TerminalTabContent(prefs: Prefs) {
+    var confirmReboot by remember { mutableStateOf(false) }
+    var rebootResult by remember { mutableStateOf<String?>(null) }
+    var rebooting by remember { mutableStateOf(false) }
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+
+    Column(modifier = Modifier.fillMaxSize()) {
+        if (prefs.terminalUrl.isBlank()) {
+            Box(Modifier.weight(1f).fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Icon(
+                        Icons.Filled.Terminal,
+                        contentDescription = null,
+                        modifier = Modifier.size(48.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    Text(
+                        "Belum ada URL Web Terminal. Atur dulu di tab Settings.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                    )
+                }
+            }
+        } else {
+            Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                AndroidView(
+                    factory = { ctx ->
+                        android.webkit.WebView(ctx).apply {
+                            settings.javaScriptEnabled = true
+                            settings.domStorageEnabled = true
+                            webViewClient = android.webkit.WebViewClient()
+                            loadUrl(prefs.terminalUrl)
+                        }
+                    },
+                    modifier = Modifier.fillMaxSize()
+                )
+            }
+        }
+
+        Column(modifier = Modifier.padding(16.dp)) {
+            rebootResult?.let {
+                Text(
+                    it,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(bottom = 8.dp)
+                )
+            }
+            OutlinedButton(
+                onClick = { confirmReboot = true },
+                enabled = !rebooting,
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = com.remotwrt.bot.ui.theme.RemotRed),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                if (rebooting) {
+                    CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                    Spacer(Modifier.width(8.dp))
+                } else {
+                    Icon(Icons.Filled.Power, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(6.dp))
+                }
+                Text("Reboot Router")
+            }
+        }
+    }
+
+    if (confirmReboot) {
+        AlertDialog(
+            onDismissRequest = { confirmReboot = false },
+            title = { Text("Reboot Router?") },
+            text = { Text("Router akan restart dan koneksi akan terputus sebentar. Lanjutkan?") },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmReboot = false
+                    rebooting = true
+                    scope.launch {
+                        val output = withContext(Dispatchers.IO) {
+                            try {
+                                LuciClient(prefs).rebootRouter()
+                                "Perintah reboot terkirim. Router akan restart sebentar lagi."
+                            } catch (e: Exception) {
+                                "Gagal: ${e.message}"
+                            }
+                        }
+                        rebootResult = output
+                        rebooting = false
+                    }
+                }) { Text("Reboot", color = com.remotwrt.bot.ui.theme.RemotRed) }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmReboot = false }) { Text("Batal") }
+            }
+        )
+    }
+}
+
+// ==================== Settings tab ====================
+
+@Composable
+fun SettingsTabContent(prefs: Prefs, onLogout: () -> Unit) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+
+    var baseUrl by remember { mutableStateOf(prefs.baseUrl) }
+    var terminalUrl by remember { mutableStateOf(prefs.terminalUrl) }
+    var username by remember { mutableStateOf(prefs.username) }
+    var password by remember { mutableStateOf(prefs.password) }
+    var saving by remember { mutableStateOf(false) }
+    var saveMessage by remember { mutableStateOf<String?>(null) }
+    var saveError by remember { mutableStateOf<String?>(null) }
+    var confirmLogout by remember { mutableStateOf(false) }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(20.dp)
+    ) {
+        Text("Cloudflare Connection Setup", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(16.dp))
+
+        OutlinedTextField(
+            value = baseUrl,
+            onValueChange = { baseUrl = it },
+            label = { Text("Router API URL (LuCI)") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth()
+        )
+        Spacer(Modifier.height(12.dp))
+        OutlinedTextField(
+            value = terminalUrl,
+            onValueChange = { terminalUrl = it },
+            label = { Text("Terminal Web URL (ttyd)") },
+            placeholder = { Text("https://terminal.domain.my.id") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth()
+        )
+        Spacer(Modifier.height(12.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
+            OutlinedTextField(
+                value = username,
+                onValueChange = { username = it },
+                label = { Text("Username") },
+                singleLine = true,
+                modifier = Modifier.weight(1f)
+            )
+            OutlinedTextField(
+                value = password,
+                onValueChange = { password = it },
+                label = { Text("Password") },
+                singleLine = true,
+                visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                modifier = Modifier.weight(1f)
+            )
+        }
+
+        saveError?.let {
+            Spacer(Modifier.height(8.dp))
+            Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+        }
+        saveMessage?.let {
+            Spacer(Modifier.height(8.dp))
+            Text(it, color = com.remotwrt.bot.ui.theme.RemotGreen, style = MaterialTheme.typography.bodySmall)
+        }
+
+        Spacer(Modifier.height(20.dp))
+        Button(
+            onClick = {
+                saveError = null
+                saveMessage = null
+                saving = true
+                prefs.baseUrl = baseUrl
+                prefs.terminalUrl = terminalUrl
+                prefs.username = username
+                prefs.password = password
+                scope.launch {
+                    withContext(Dispatchers.IO) {
+                        try {
+                            LuciClient(prefs).login()
+                            withContext(Dispatchers.Main) { saveMessage = "Berhasil terhubung." }
+                        } catch (e: Exception) {
+                            withContext(Dispatchers.Main) { saveError = "Gagal terhubung: ${e.message}" }
+                        }
+                    }
+                    saving = false
+                }
+            },
+            enabled = !saving && baseUrl.isNotBlank() && username.isNotBlank() && password.isNotBlank(),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            if (saving) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(16.dp),
+                    strokeWidth = 2.dp,
+                    color = MaterialTheme.colorScheme.onPrimary
+                )
+                Spacer(Modifier.width(8.dp))
+            } else {
+                Icon(Icons.Filled.CloudDone, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(6.dp))
+            }
+            Text(if (saving) "Menghubungkan..." else "Save & Connect")
+        }
+
+        Spacer(Modifier.height(12.dp))
+        OutlinedButton(
+            onClick = { context.startActivity(Intent(context, WebViewActivity::class.java)) },
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Icon(Icons.Filled.OpenInBrowser, contentDescription = null, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.width(6.dp))
+            Text("Buka Panel LuCI Lengkap")
+        }
+
+        Spacer(Modifier.height(24.dp))
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .height(1.dp)
+                .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f))
+        )
+        Spacer(Modifier.height(16.dp))
+
+        OutlinedButton(
+            onClick = { confirmLogout = true },
+            colors = ButtonDefaults.outlinedButtonColors(contentColor = com.remotwrt.bot.ui.theme.RemotRed),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Icon(Icons.Filled.Logout, contentDescription = null, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.width(6.dp))
+            Text("Logout")
+        }
+
+        Spacer(Modifier.height(20.dp))
+        Text(
+            "RemotWRT Bot",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.align(Alignment.CenterHorizontally)
+        )
+    }
+
+    if (confirmLogout) {
+        AlertDialog(
+            onDismissRequest = { confirmLogout = false },
+            title = { Text("Logout?") },
+            text = { Text("Anda perlu login ulang untuk memakai app ini lagi.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmLogout = false
+                    onLogout()
+                }) { Text("Logout", color = com.remotwrt.bot.ui.theme.RemotRed) }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmLogout = false }) { Text("Batal") }
+            }
+        )
     }
 }
