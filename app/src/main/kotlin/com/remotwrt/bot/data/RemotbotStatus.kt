@@ -41,6 +41,13 @@ data class RemotbotStatus(
     val myIpCity: String = "-",
     val myIpRegion: String = "-",
     val myIpCountry: String = "-",
+
+    val netIface: String = "eth1",
+    val netRxBytes: Long = 0,
+    val netTxBytes: Long = 0,
+    val netRxRateBps: Double = 0.0,
+    val netTxRateBps: Double = 0.0,
+
     val openclashEnabled: Boolean = false,
     val openclashRunning: Boolean = false,
     val cloudflaredEnabled: Boolean = false,

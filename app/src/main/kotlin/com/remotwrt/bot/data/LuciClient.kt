@@ -44,6 +44,7 @@ class LuciClient(private val prefs: Prefs) {
     private fun registerFcmUrl() = "${prefs.baseUrl}/cgi-bin/luci/admin/services/remotbot/register_fcm"
     private fun commandsUrl() = "${prefs.baseUrl}/cgi-bin/luci/admin/services/remotbot/commands"
     private fun namedDevicesUrl() = "${prefs.baseUrl}/cgi-bin/luci/admin/services/remotbot/named_devices"
+    private fun rebootUrl() = "${prefs.baseUrl}/cgi-bin/luci/admin/services/remotbot/reboot"
     private fun runCommandUrl() = "${prefs.baseUrl}/cgi-bin/luci/admin/services/remotbot/run_command"
     private fun loginUrl() = "${prefs.baseUrl}/cgi-bin/luci/"
 
@@ -151,6 +152,11 @@ class LuciClient(private val prefs: Prefs) {
             myIpCity = json.optString("my_ip_city", "-"),
             myIpRegion = json.optString("my_ip_region", "-"),
             myIpCountry = json.optString("my_ip_country", "-"),
+            netIface = json.optString("net_iface", "eth1"),
+            netRxBytes = json.optLong("net_rx_bytes", 0),
+            netTxBytes = json.optLong("net_tx_bytes", 0),
+            netRxRateBps = json.optDouble("net_rx_rate_bps", 0.0),
+            netTxRateBps = json.optDouble("net_tx_rate_bps", 0.0),
             openclashEnabled = json.optBoolean("openclash_enabled", false),
             openclashRunning = json.optBoolean("openclash_running", false),
             cloudflaredEnabled = json.optBoolean("cloudflared_enabled", false),
@@ -229,6 +235,15 @@ class LuciClient(private val prefs: Prefs) {
                 status = d.optString("status", "TIDAK TERHUBUNG"),
                 categories = categories
             )
+        }
+    }
+
+    /** Reboots the router. The router delays the actual reboot ~2s so this call can return cleanly. */
+    fun rebootRouter() {
+        val form = FormBody.Builder().build()
+        val json = withSession { postRaw(rebootUrl(), form) }
+        if (!json.optBoolean("ok", false)) {
+            throw LuciActionException(json.optString("error", "Gagal reboot"))
         }
     }
 

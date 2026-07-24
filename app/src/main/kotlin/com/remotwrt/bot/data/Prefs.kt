@@ -28,6 +28,10 @@ class Prefs(context: Context) {
         get() = prefs.getString("base_url", "") ?: ""
         set(value) = prefs.edit().putString("base_url", value.trimEnd('/')).apply()
 
+    var terminalUrl: String
+        get() = prefs.getString("terminal_url", "") ?: ""
+        set(value) = prefs.edit().putString("terminal_url", value.trimEnd('/')).apply()
+
     var username: String
         get() = prefs.getString("username", "") ?: ""
         set(value) = prefs.edit().putString("username", value).apply()

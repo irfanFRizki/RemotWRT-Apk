@@ -8,9 +8,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 
 private val DarkColors = darkColorScheme(
-    primary = RemotTeal,
-    onPrimary = Color(0xFF00201C),
-    secondary = RemotTealBright,
+    primary = RemotIndigo,
+    onPrimary = Color(0xFFFFFFFF),
+    secondary = RemotIndigoLight,
     background = RemotBackground,
     surface = RemotSurface,
     surfaceVariant = RemotSurfaceElevated,
@@ -18,7 +18,7 @@ private val DarkColors = darkColorScheme(
 )
 
 private val LightColors = lightColorScheme(
-    primary = RemotTeal,
+    primary = RemotIndigo,
     error = RemotRed
 )
 
