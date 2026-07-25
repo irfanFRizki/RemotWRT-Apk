@@ -341,13 +341,9 @@ private fun HomeTabContent(prefs: Prefs) {
             Spacer(Modifier.height(16.dp))
             StaggeredEntry(2) { StatusCard(s) }
             Spacer(Modifier.height(12.dp))
-            StaggeredEntry(3) { NetworkCard(s) }
+            StaggeredEntry(3) { ServicesCard(s) }
             Spacer(Modifier.height(12.dp))
-            StaggeredEntry(4) { MyIpCard(s) }
-            Spacer(Modifier.height(12.dp))
-            StaggeredEntry(5) { ServicesCard(s) }
-            Spacer(Modifier.height(12.dp))
-            StaggeredEntry(6) { CommandsCard(prefs) }
+            StaggeredEntry(4) { CommandsCard(prefs) }
         }
     }
 }
@@ -375,6 +371,9 @@ private fun formatRate(bytesPerSec: Double): String {
 
 @Composable
 private fun TrafficHeroCard(s: RemotbotStatus) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
+
     Box(
         modifier = Modifier
             .fillMaxWidth()
@@ -439,6 +438,51 @@ private fun TrafficHeroCard(s: RemotbotStatus) {
                     )
                 }
             }
+
+            // ---- WAN status + public IP, merged in from the former Network/MyIp cards ----
+            Spacer(Modifier.height(16.dp))
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .height(1.dp)
+                    .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f))
+            )
+            Spacer(Modifier.height(14.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                StatusPill(
+                    if (s.wanUp) "WAN Terhubung" else "WAN Terputus",
+                    if (s.wanUp) com.remotwrt.bot.ui.theme.RemotGreen else com.remotwrt.bot.ui.theme.RemotRed,
+                    pulsing = s.wanUp
+                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        s.myIp,
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+                    )
+                    IconButton(
+                        onClick = {
+                            clipboard.setText(androidx.compose.ui.text.AnnotatedString(s.myIp))
+                            android.widget.Toast.makeText(context, "IP disalin", android.widget.Toast.LENGTH_SHORT).show()
+                        },
+                        modifier = Modifier.size(28.dp)
+                    ) {
+                        Icon(Icons.Filled.ContentCopy, contentDescription = "Salin IP", modifier = Modifier.size(16.dp))
+                    }
+                }
+            }
+            Spacer(Modifier.height(4.dp))
+            val location = listOf(s.myIpCity, s.myIpRegion).filter { it.isNotBlank() && it != "-" }.joinToString(", ")
+            Text(
+                listOf(s.myIpIsp, location).filter { it.isNotBlank() && it != "-" }.joinToString(" • "),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
     }
 }
@@ -699,18 +743,6 @@ private fun StatusCard(s: RemotbotStatus) {
 }
 
 @Composable
-private fun NetworkCard(s: RemotbotStatus) {
-    InfoCard("Jaringan", Icons.Filled.Wifi) {
-        StatRowPill(
-            "WAN",
-            if (s.wanUp) "Terhubung" else "Terputus",
-            if (s.wanUp) com.remotwrt.bot.ui.theme.RemotGreen else com.remotwrt.bot.ui.theme.RemotRed,
-            pulsing = s.wanUp
-        )
-    }
-}
-
-@Composable
 private fun AppVersionCard() {
     val context = androidx.compose.ui.platform.LocalContext.current
     val scope = androidx.compose.runtime.rememberCoroutineScope()
@@ -865,36 +897,6 @@ private fun formatUptime(seconds: Long): String {
     val hours = (seconds % 86400) / 3600
     val minutes = (seconds % 3600) / 60
     return "${days}h ${hours}j ${minutes}m"
-}
-
-@Composable
-private fun MyIpCard(s: RemotbotStatus) {
-    val context = androidx.compose.ui.platform.LocalContext.current
-    val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
-
-    InfoCard("Informasi IP Publik", Icons.Filled.Public) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(
-                s.myIp,
-                style = MaterialTheme.typography.titleMedium,
-                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
-            )
-            IconButton(onClick = {
-                clipboard.setText(androidx.compose.ui.text.AnnotatedString(s.myIp))
-                android.widget.Toast.makeText(context, "IP disalin", android.widget.Toast.LENGTH_SHORT).show()
-            }) {
-                Icon(Icons.Filled.ContentCopy, contentDescription = "Salin IP")
-            }
-        }
-        Spacer(Modifier.height(4.dp))
-        StatRow("ISP", s.myIpIsp)
-        StatRow("Lokasi", listOf(s.myIpCity, s.myIpRegion).filter { it.isNotBlank() && it != "-" }.joinToString(", ").ifBlank { "-" })
-        StatRow("Negara", s.myIpCountry)
-    }
 }
 
 @Composable
