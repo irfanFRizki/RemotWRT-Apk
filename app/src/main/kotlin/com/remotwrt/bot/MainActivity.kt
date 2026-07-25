@@ -353,9 +353,7 @@ private fun HomeTabContent(prefs: Prefs, onManageDevices: () -> Unit) {
             Spacer(Modifier.height(12.dp))
             StaggeredEntry(8) { CommandsCard(prefs) }
             Spacer(Modifier.height(12.dp))
-            StaggeredEntry(9) { NamedDevicesCard(prefs) }
-            Spacer(Modifier.height(12.dp))
-            StaggeredEntry(10) { AppVersionCard() }
+            StaggeredEntry(9) { AppVersionCard() }
         }
     }
 }
@@ -1023,116 +1021,6 @@ private val CATEGORY_META = listOf(
 )
 
 @Composable
-private fun NamedDevicesCard(prefs: Prefs) {
-    var devices by remember { mutableStateOf<List<com.remotwrt.bot.data.NamedDeviceInfo>?>(null) }
-    var error by remember { mutableStateOf<String?>(null) }
-    var refreshTick by remember { mutableStateOf(0) }
-
-    LaunchedEffect(refreshTick) {
-        withContext(Dispatchers.IO) {
-            try {
-                val result = LuciClient(prefs).fetchNamedDevices()
-                withContext(Dispatchers.Main) {
-                    devices = result
-                    error = null
-                }
-            } catch (e: Exception) {
-                withContext(Dispatchers.Main) { error = "Gagal memuat: ${e.message}" }
-            }
-        }
-    }
-
-    InfoCard("Nama Perangkat Online", Icons.Filled.Devices) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            val list = devices
-            Text(
-                if (list != null) "${list.size} perangkat online" else "Memuat...",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            IconButton(onClick = { refreshTick++ }, modifier = Modifier.size(28.dp)) {
-                Icon(Icons.Filled.Refresh, contentDescription = "Refresh", modifier = Modifier.size(18.dp))
-            }
-        }
-
-        error?.let {
-            Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
-        }
-
-        val list = devices
-        if (list == null && error == null) {
-            Box(Modifier.fillMaxWidth().padding(vertical = 8.dp), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
-            }
-        } else if (list != null && list.isEmpty()) {
-            Text(
-                "Tidak ada perangkat terdaftar yang online saat ini.",
-                style = MaterialTheme.typography.bodySmall
-            )
-        } else if (list != null) {
-            Spacer(Modifier.height(4.dp))
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                list.forEach { device ->
-                    Column(modifier = Modifier.fillMaxWidth()) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(device.icon, style = MaterialTheme.typography.bodyLarge)
-                                Spacer(Modifier.width(8.dp))
-                                Column {
-                                    Text(device.name, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
-                                    Text(
-                                        device.ip,
-                                        style = MaterialTheme.typography.labelSmall,
-                                        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                            }
-                            StatusPill("Online", com.remotwrt.bot.ui.theme.RemotGreen, pulsing = true)
-                        }
-
-                        val activeCats = CATEGORY_META.filter { !device.categories[it.key].isNullOrEmpty() }
-                        if (activeCats.isNotEmpty()) {
-                            Spacer(Modifier.height(6.dp))
-                            Row(
-                                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                activeCats.forEach { meta ->
-                                    val apps = device.categories[meta.key].orEmpty()
-                                    val topApp = apps.firstOrNull()?.name ?: meta.key
-                                    val extraCount = apps.size - 1
-                                    val label = if (extraCount > 0) "${meta.icon} $topApp +$extraCount" else "${meta.icon} $topApp"
-                                    Surface(
-                                        color = meta.color.copy(alpha = 0.15f),
-                                        contentColor = meta.color,
-                                        shape = MaterialTheme.shapes.small
-                                    ) {
-                                        Text(
-                                            label,
-                                            style = MaterialTheme.typography.labelSmall,
-                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
 private fun CommandsCard(prefs: Prefs) {
     val scope = androidx.compose.runtime.rememberCoroutineScope()
     var commands by remember { mutableStateOf<List<CommandInfo>?>(null) }
@@ -1249,6 +1137,7 @@ private enum class DeviceTab(val label: String) {
 @Composable
 fun DevicesTabContent(prefs: Prefs) {
     var devices by remember { mutableStateOf<List<DeviceInfo>?>(null) }
+    var namedDevices by remember { mutableStateOf<List<com.remotwrt.bot.data.NamedDeviceInfo>?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     var refreshTick by remember { mutableStateOf(0) }
     var tab by remember { mutableStateOf(DeviceTab.ONLINE) }
@@ -1260,14 +1149,28 @@ fun DevicesTabContent(prefs: Prefs) {
         withContext(Dispatchers.IO) {
             try {
                 val result = LuciClient(prefs).fetchDevices()
+                // Best-effort: the named-device registry (custom names/icons +
+                // Clash connection categories) is only really useful for the
+                // Online tab, but it's cheap enough to refresh every cycle here
+                // too rather than adding a second polling loop.
+                val namedResult = try {
+                    LuciClient(prefs).fetchNamedDevices()
+                } catch (_: Exception) {
+                    null
+                }
                 withContext(Dispatchers.Main) {
                     devices = result
+                    if (namedResult != null) namedDevices = namedResult
                     error = null
                 }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) { error = "Gagal memuat device: ${e.message}" }
             }
         }
+    }
+
+    val namedByIp = remember(namedDevices) {
+        namedDevices?.associateBy { it.ip } ?: emptyMap()
     }
 
     // Auto-refresh every 10s while this screen is open, same cadence as the dashboard.
@@ -1352,7 +1255,8 @@ fun DevicesTabContent(prefs: Prefs) {
                             DeviceRow(
                                 device = device,
                                 busy = busyMac == device.mac,
-                                actions = actionsFor(tab, device) { action -> performAction(device.mac, action) }
+                                actions = actionsFor(tab, device) { action -> performAction(device.mac, action) },
+                                named = namedByIp[device.ip]
                             )
                         }
                     }
@@ -1436,7 +1340,8 @@ private fun formatDuration(seconds: Long): String {
 private fun DeviceRow(
     device: DeviceInfo,
     busy: Boolean,
-    actions: List<DeviceAction>
+    actions: List<DeviceAction>,
+    named: com.remotwrt.bot.data.NamedDeviceInfo? = null
 ) {
     val (categoryText, categoryColor) = categoryLabel(device.category)
 
@@ -1447,12 +1352,17 @@ private fun DeviceRow(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(
-                    device.name.ifBlank { "-" },
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.SemiBold,
-                    modifier = Modifier.weight(1f)
-                )
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                    if (named != null) {
+                        Text(named.icon, style = MaterialTheme.typography.titleSmall)
+                        Spacer(Modifier.width(6.dp))
+                    }
+                    Text(
+                        (named?.name?.takeIf { it.isNotBlank() } ?: device.name).ifBlank { "-" },
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
                 Badge(categoryText, categoryColor)
             }
 
@@ -1483,6 +1393,33 @@ private fun DeviceRow(
                     style = MaterialTheme.typography.bodySmall,
                     color = com.remotwrt.bot.ui.theme.RemotGreen
                 )
+            }
+
+            // Connection category badges (Sosmed/Game/Belanja/Streaming), merged in
+            // from the named-device registry -- only present for devices with a
+            // custom name AND active Clash connections right now.
+            val activeCats = named?.let { n -> CATEGORY_META.filter { !n.categories[it.key].isNullOrEmpty() } }.orEmpty()
+            if (activeCats.isNotEmpty()) {
+                Spacer(Modifier.height(6.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
+                    activeCats.forEach { meta ->
+                        val apps = named!!.categories[meta.key].orEmpty()
+                        val topApp = apps.firstOrNull()?.name ?: meta.key
+                        val extraCount = apps.size - 1
+                        val label = if (extraCount > 0) "${meta.icon} $topApp +$extraCount" else "${meta.icon} $topApp"
+                        Surface(
+                            color = meta.color.copy(alpha = 0.15f),
+                            contentColor = meta.color,
+                            shape = MaterialTheme.shapes.small
+                        ) {
+                            Text(
+                                label,
+                                style = MaterialTheme.typography.labelSmall,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                            )
+                        }
+                    }
+                }
             }
 
             if (actions.isNotEmpty()) {
