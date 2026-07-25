@@ -112,7 +112,7 @@ private fun MainScaffold(prefs: Prefs, onLogout: () -> Unit) {
     ) { padding ->
         Box(modifier = Modifier.padding(padding).fillMaxSize()) {
             when (tab) {
-                BottomTab.HOME -> HomeTabContent(prefs, onManageDevices = { tab = BottomTab.DEVICES })
+                BottomTab.HOME -> HomeTabContent(prefs)
                 BottomTab.DEVICES -> DevicesTabContent(prefs)
                 BottomTab.TERMINAL -> TerminalTabContent(prefs)
                 BottomTab.SETTINGS -> SettingsTabContent(prefs, onLogout = onLogout)
@@ -296,7 +296,7 @@ fun SetupScreen(prefs: Prefs, onLoggedIn: () -> Unit) {
 
 
 @Composable
-private fun HomeTabContent(prefs: Prefs, onManageDevices: () -> Unit) {
+private fun HomeTabContent(prefs: Prefs) {
     var status by remember { mutableStateOf<RemotbotStatus?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     var refreshTick by remember { mutableStateOf(0) }
@@ -341,19 +341,13 @@ private fun HomeTabContent(prefs: Prefs, onManageDevices: () -> Unit) {
             Spacer(Modifier.height(16.dp))
             StaggeredEntry(2) { StatusCard(s) }
             Spacer(Modifier.height(12.dp))
-            StaggeredEntry(3) { ResourceCard(s) }
+            StaggeredEntry(3) { NetworkCard(s) }
             Spacer(Modifier.height(12.dp))
-            StaggeredEntry(4) { NetworkCard(s) }
+            StaggeredEntry(4) { MyIpCard(s) }
             Spacer(Modifier.height(12.dp))
-            StaggeredEntry(5) { DevicesCard(s, onManageDevices) }
+            StaggeredEntry(5) { ServicesCard(s) }
             Spacer(Modifier.height(12.dp))
-            StaggeredEntry(6) { MyIpCard(s) }
-            Spacer(Modifier.height(12.dp))
-            StaggeredEntry(7) { ServicesCard(s) }
-            Spacer(Modifier.height(12.dp))
-            StaggeredEntry(8) { CommandsCard(prefs) }
-            Spacer(Modifier.height(12.dp))
-            StaggeredEntry(9) { AppVersionCard() }
+            StaggeredEntry(6) { CommandsCard(prefs) }
         }
     }
 }
@@ -705,67 +699,6 @@ private fun StatusCard(s: RemotbotStatus) {
 }
 
 @Composable
-private fun ResourceCard(s: RemotbotStatus) {
-    InfoCard("Sumber Daya", Icons.Filled.Memory) {
-        val cpuOver = s.cpuTemp != null && s.cpuTemp > s.cpuTempLimit
-        val cpuColor = if (cpuOver) com.remotwrt.bot.ui.theme.RemotRed else MaterialTheme.colorScheme.primary
-        val cpuFraction = if (s.cpuTemp != null && s.cpuTempLimit > 0)
-            (s.cpuTemp / s.cpuTempLimit).toFloat().coerceIn(0f, 1f) else 0f
-        val animatedCpuFraction by animateFloatAsState(
-            targetValue = cpuFraction, animationSpec = tween(600), label = "cpu_temp_bar"
-        )
-        StatRow(
-            "Suhu CPU",
-            if (s.cpuTemp != null) "${s.cpuTemp}°C (batas ${s.cpuTempLimit}°C)" else "N/A",
-            if (cpuOver) com.remotwrt.bot.ui.theme.RemotRed else Color.Unspecified
-        )
-        LinearProgressIndicator(
-            progress = animatedCpuFraction,
-            color = cpuColor,
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(6.dp)
-                .clip(RoundedCornerShape(3.dp))
-        )
-        Spacer(Modifier.height(10.dp))
-
-        val ramOver = s.memPct > s.ramLimit
-        val ramColor = if (ramOver) com.remotwrt.bot.ui.theme.RemotRed else MaterialTheme.colorScheme.primary
-        val animatedRamFraction by animateFloatAsState(
-            targetValue = (s.memPct / 100f).coerceIn(0f, 1f), animationSpec = tween(600), label = "ram_bar"
-        )
-        StatRow("RAM", "${s.memPct}% (${s.memUsedMb}/${s.memTotalMb} MB)", if (ramOver) com.remotwrt.bot.ui.theme.RemotRed else Color.Unspecified)
-        LinearProgressIndicator(
-            progress = animatedRamFraction,
-            color = ramColor,
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(6.dp)
-                .clip(RoundedCornerShape(3.dp))
-        )
-        Spacer(Modifier.height(10.dp))
-
-        s.diskPct?.let { diskPct ->
-            val animatedDiskFraction by animateFloatAsState(
-                targetValue = (diskPct / 100f).coerceIn(0f, 1f), animationSpec = tween(600), label = "disk_bar"
-            )
-            StatRow("Disk (overlay)", "$diskPct%")
-            LinearProgressIndicator(
-                progress = animatedDiskFraction,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(6.dp)
-                    .clip(RoundedCornerShape(3.dp))
-            )
-            Spacer(Modifier.height(10.dp))
-        }
-
-        StatRow("Load Average", s.load1)
-        StatRow("Uptime", formatUptime(s.uptimeSec))
-    }
-}
-
-@Composable
 private fun NetworkCard(s: RemotbotStatus) {
     InfoCard("Jaringan", Icons.Filled.Wifi) {
         StatRowPill(
@@ -774,26 +707,6 @@ private fun NetworkCard(s: RemotbotStatus) {
             if (s.wanUp) com.remotwrt.bot.ui.theme.RemotGreen else com.remotwrt.bot.ui.theme.RemotRed,
             pulsing = s.wanUp
         )
-    }
-}
-
-@Composable
-private fun DevicesCard(s: RemotbotStatus, onManageDevices: () -> Unit) {
-    InfoCard("Device", Icons.Filled.Devices) {
-        StatRow("Online", "${s.devicesOnline}")
-        StatRow("Whitelist", "${s.whitelistCount}")
-        StatRow(
-            "Pending Approval",
-            "${s.pendingCount}",
-            if (s.pendingCount > 0) com.remotwrt.bot.ui.theme.RemotAmber else Color.Unspecified
-        )
-        StatRow("Blocked", "${s.blockedCount}")
-        Spacer(Modifier.height(8.dp))
-        Button(onClick = onManageDevices, modifier = Modifier.fillMaxWidth()) {
-            Icon(Icons.Filled.List, contentDescription = null, modifier = Modifier.size(18.dp))
-            Spacer(Modifier.width(6.dp))
-            Text("Kelola Device")
-        }
     }
 }
 
@@ -1686,12 +1599,7 @@ fun SettingsTabContent(prefs: Prefs, onLogout: () -> Unit) {
         }
 
         Spacer(Modifier.height(20.dp))
-        Text(
-            "RemotWRT Bot",
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.align(Alignment.CenterHorizontally)
-        )
+        AppVersionCard()
     }
 
     if (confirmLogout) {
