@@ -1395,10 +1395,17 @@ fun TerminalTabContent(prefs: Prefs) {
                 var loadError by remember { mutableStateOf<String?>(null) }
                 var loadProgress by remember { mutableStateOf(0) }
                 var reloadTick by remember { mutableStateOf(0) }
+                var consoleLogs by remember { mutableStateOf<List<String>>(emptyList()) }
+                var showConsoleLog by remember { mutableStateOf(false) }
 
                 androidx.compose.runtime.key(reloadTick) {
                     AndroidView(
                         factory = { ctx ->
+                            // Lets a PC with Chrome + USB cable inspect this WebView
+                            // fully via chrome://inspect -- safe to leave on since this
+                            // app is never distributed publicly.
+                            android.webkit.WebView.setWebContentsDebuggingEnabled(true)
+
                             android.webkit.WebView(ctx).apply {
                                 settings.javaScriptEnabled = true
                                 settings.domStorageEnabled = true
@@ -1413,6 +1420,18 @@ fun TerminalTabContent(prefs: Prefs) {
                                 webChromeClient = object : android.webkit.WebChromeClient() {
                                     override fun onProgressChanged(view: android.webkit.WebView?, newProgress: Int) {
                                         loadProgress = newProgress
+                                    }
+                                    // ttyd's frontend (xterm.js) can fail to render with
+                                    // NO network-level error at all -- the HTML shell loads
+                                    // fine, but a JS exception stops the terminal from ever
+                                    // mounting, leaving a blank white page. This is the only
+                                    // way to actually see why.
+                                    override fun onConsoleMessage(msg: android.webkit.ConsoleMessage?): Boolean {
+                                        msg?.let {
+                                            val line = "[${it.messageLevel()}] ${it.message()} (${it.sourceId()}:${it.lineNumber()})"
+                                            consoleLogs = (consoleLogs + line).takeLast(50)
+                                        }
+                                        return true
                                     }
                                 }
                                 webViewClient = object : android.webkit.WebViewClient() {
@@ -1462,6 +1481,51 @@ fun TerminalTabContent(prefs: Prefs) {
                     LinearProgressIndicator(
                         progress = loadProgress / 100f,
                         modifier = Modifier.fillMaxWidth().align(Alignment.TopCenter)
+                    )
+                }
+
+                // Small diagnostic toolbar -- always visible over the WebView so it's
+                // usable even when the page is blank (no error banner to hang off of).
+                if (loadError == null) {
+                    val diagContext = androidx.compose.ui.platform.LocalContext.current
+                    Row(
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .padding(8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        if (consoleLogs.isNotEmpty()) {
+                            OutlinedButton(onClick = { showConsoleLog = true }) {
+                                Text("Log Konsol (${consoleLogs.size})")
+                            }
+                        }
+                        OutlinedButton(onClick = {
+                            val intent = android.content.Intent(
+                                android.content.Intent.ACTION_VIEW,
+                                android.net.Uri.parse(prefs.terminalUrl)
+                            )
+                            diagContext.startActivity(intent)
+                        }) {
+                            Text("Buka di Browser")
+                        }
+                    }
+                }
+
+                if (showConsoleLog) {
+                    AlertDialog(
+                        onDismissRequest = { showConsoleLog = false },
+                        title = { Text("Log Konsol JS") },
+                        text = {
+                            Text(
+                                if (consoleLogs.isEmpty()) "Belum ada log." else consoleLogs.joinToString("\n\n"),
+                                style = MaterialTheme.typography.bodySmall,
+                                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                                modifier = Modifier.verticalScroll(rememberScrollState())
+                            )
+                        },
+                        confirmButton = {
+                            TextButton(onClick = { showConsoleLog = false }) { Text("Tutup") }
+                        }
                     )
                 }
 
