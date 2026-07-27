@@ -1397,6 +1397,13 @@ fun TerminalTabContent(prefs: Prefs) {
                 var reloadTick by remember { mutableStateOf(0) }
                 var consoleLogs by remember { mutableStateOf<List<String>>(emptyList()) }
                 var showConsoleLog by remember { mutableStateOf(false) }
+                // Toggle for a known Android WebView bug class: a WebGL canvas
+                // (like ttyd/xterm.js's WebGL renderer) can render internally but
+                // never actually composite onto the screen, leaving a blank page
+                // even though the console shows no errors. Forcing the opposite
+                // layer type is the commonly-documented workaround -- exposed here
+                // as a live toggle so it can be tested without a rebuild.
+                var useHardwareLayer by remember { mutableStateOf(true) }
 
                 androidx.compose.runtime.key(reloadTick) {
                     AndroidView(
@@ -1407,6 +1414,11 @@ fun TerminalTabContent(prefs: Prefs) {
                             android.webkit.WebView.setWebContentsDebuggingEnabled(true)
 
                             android.webkit.WebView(ctx).apply {
+                                setLayerType(
+                                    if (useHardwareLayer) android.view.View.LAYER_TYPE_HARDWARE
+                                    else android.view.View.LAYER_TYPE_SOFTWARE,
+                                    null
+                                )
                                 settings.javaScriptEnabled = true
                                 settings.domStorageEnabled = true
                                 settings.databaseEnabled = true
@@ -1507,6 +1519,12 @@ fun TerminalTabContent(prefs: Prefs) {
                             diagContext.startActivity(intent)
                         }) {
                             Text("Buka di Browser")
+                        }
+                        OutlinedButton(onClick = {
+                            useHardwareLayer = !useHardwareLayer
+                            reloadTick++
+                        }) {
+                            Text(if (useHardwareLayer) "Mode: Hardware" else "Mode: Software")
                         }
                     }
                 }
