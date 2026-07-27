@@ -1392,17 +1392,108 @@ fun TerminalTabContent(prefs: Prefs) {
             }
         } else {
             Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
-                AndroidView(
-                    factory = { ctx ->
-                        android.webkit.WebView(ctx).apply {
-                            settings.javaScriptEnabled = true
-                            settings.domStorageEnabled = true
-                            webViewClient = android.webkit.WebViewClient()
-                            loadUrl(prefs.terminalUrl)
-                        }
-                    },
-                    modifier = Modifier.fillMaxSize()
-                )
+                var loadError by remember { mutableStateOf<String?>(null) }
+                var loadProgress by remember { mutableStateOf(0) }
+                var reloadTick by remember { mutableStateOf(0) }
+
+                androidx.compose.runtime.key(reloadTick) {
+                    AndroidView(
+                        factory = { ctx ->
+                            android.webkit.WebView(ctx).apply {
+                                settings.javaScriptEnabled = true
+                                settings.domStorageEnabled = true
+                                settings.databaseEnabled = true
+                                // ttyd's own asset delivery sometimes mixes http/https
+                                // sub-resources behind a tunnel -- without this, newer
+                                // WebView silently blocks them and the page just looks
+                                // blank with no visible error.
+                                settings.mixedContentMode =
+                                    android.webkit.WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
+
+                                webChromeClient = object : android.webkit.WebChromeClient() {
+                                    override fun onProgressChanged(view: android.webkit.WebView?, newProgress: Int) {
+                                        loadProgress = newProgress
+                                    }
+                                }
+                                webViewClient = object : android.webkit.WebViewClient() {
+                                    override fun onPageStarted(view: android.webkit.WebView?, url: String?, favicon: android.graphics.Bitmap?) {
+                                        loadError = null
+                                    }
+                                    override fun onReceivedError(
+                                        view: android.webkit.WebView?,
+                                        request: android.webkit.WebResourceRequest?,
+                                        error: android.webkit.WebResourceError?
+                                    ) {
+                                        // Only surface errors for the main frame -- a failed
+                                        // sub-resource (e.g. a favicon) shouldn't blank the
+                                        // whole terminal view.
+                                        if (request?.isForMainFrame != false) {
+                                            loadError = "Gagal memuat: ${error?.description ?: "unknown error"}"
+                                        }
+                                    }
+                                    override fun onReceivedHttpError(
+                                        view: android.webkit.WebView?,
+                                        request: android.webkit.WebResourceRequest?,
+                                        errorResponse: android.webkit.WebResourceResponse?
+                                    ) {
+                                        if (request?.isForMainFrame != false) {
+                                            loadError = "Server membalas HTTP ${errorResponse?.statusCode}"
+                                        }
+                                    }
+                                    override fun onReceivedSslError(
+                                        view: android.webkit.WebView?,
+                                        handler: android.webkit.SslErrorHandler?,
+                                        error: android.net.http.SslError?
+                                    ) {
+                                        // Do NOT bypass -- just surface it, so a real cert
+                                        // problem is visible instead of a silent blank page.
+                                        loadError = "Error sertifikat SSL: ${error?.primaryError}"
+                                        handler?.cancel()
+                                    }
+                                }
+                                loadUrl(prefs.terminalUrl)
+                            }
+                        },
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
+
+                if (loadProgress in 1..99 && loadError == null) {
+                    LinearProgressIndicator(
+                        progress = loadProgress / 100f,
+                        modifier = Modifier.fillMaxWidth().align(Alignment.TopCenter)
+                    )
+                }
+
+                loadError?.let { message ->
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(MaterialTheme.colorScheme.background)
+                            .padding(24.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center
+                    ) {
+                        Icon(
+                            Icons.Filled.ErrorOutline,
+                            contentDescription = null,
+                            modifier = Modifier.size(40.dp),
+                            tint = com.remotwrt.bot.ui.theme.RemotRed
+                        )
+                        Spacer(Modifier.height(12.dp))
+                        Text(
+                            message,
+                            style = MaterialTheme.typography.bodyMedium,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(Modifier.height(16.dp))
+                        OutlinedButton(onClick = {
+                            loadError = null
+                            reloadTick++
+                        }) { Text("Coba Lagi") }
+                    }
+                }
             }
         }
 
