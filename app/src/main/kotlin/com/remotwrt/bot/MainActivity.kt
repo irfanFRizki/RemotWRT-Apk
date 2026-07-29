@@ -1422,6 +1422,13 @@ fun TerminalTabContent(prefs: Prefs) {
                                 settings.javaScriptEnabled = true
                                 settings.domStorageEnabled = true
                                 settings.databaseEnabled = true
+                                // Without these, WebView can render the page zoomed out as a
+                                // "desktop site" at a fixed ~980px virtual width instead of
+                                // respecting ttyd's actual viewport/CSS sizing -- a mismatch
+                                // between the terminal's real pixel size and what xterm.js
+                                // measures can leave the canvas blank.
+                                settings.useWideViewPort = true
+                                settings.loadWithOverviewMode = true
                                 // ttyd's own asset delivery sometimes mixes http/https
                                 // sub-resources behind a tunnel -- without this, newer
                                 // WebView silently blocks them and the page just looks
@@ -1449,6 +1456,27 @@ fun TerminalTabContent(prefs: Prefs) {
                                 webViewClient = object : android.webkit.WebViewClient() {
                                     override fun onPageStarted(view: android.webkit.WebView?, url: String?, favicon: android.graphics.Bitmap?) {
                                         loadError = null
+                                    }
+                                    override fun onPageFinished(view: android.webkit.WebView?, url: String?) {
+                                        // ttyd's xterm.js canvas can end up sized 0x0 if its
+                                        // ResizeObserver doesn't fire correctly inside an
+                                        // embedded WebView (matches the "ResizeObserver loop
+                                        // completed with undelivered notifications" console
+                                        // warning) -- the page "loads" and the renderer
+                                        // initializes, but nothing visible ever gets drawn.
+                                        // Forcing a couple of delayed resize events nudges
+                                        // xterm.js's fit-addon to recompute against the
+                                        // WebView's real final layout size.
+                                        view?.postDelayed({
+                                            view.evaluateJavascript(
+                                                "window.dispatchEvent(new Event('resize'));", null
+                                            )
+                                        }, 300)
+                                        view?.postDelayed({
+                                            view.evaluateJavascript(
+                                                "window.dispatchEvent(new Event('resize'));", null
+                                            )
+                                        }, 1000)
                                     }
                                     override fun onReceivedError(
                                         view: android.webkit.WebView?,
