@@ -45,6 +45,7 @@ class LuciClient(private val prefs: Prefs) {
     private fun commandsUrl() = "${prefs.baseUrl}/cgi-bin/luci/admin/services/remotbot/commands"
     private fun namedDevicesUrl() = "${prefs.baseUrl}/cgi-bin/luci/admin/services/remotbot/named_devices"
     private fun rebootUrl() = "${prefs.baseUrl}/cgi-bin/luci/admin/services/remotbot/reboot"
+    private fun logsUrl() = "${prefs.baseUrl}/cgi-bin/luci/admin/services/remotbot/logs"
     private fun runCommandUrl() = "${prefs.baseUrl}/cgi-bin/luci/admin/services/remotbot/run_command"
     private fun loginUrl() = "${prefs.baseUrl}/cgi-bin/luci/"
 
@@ -245,6 +246,15 @@ class LuciClient(private val prefs: Prefs) {
         if (!json.optBoolean("ok", false)) {
             throw LuciActionException(json.optString("error", "Gagal reboot"))
         }
+    }
+
+    /** Fetches the last N lines of the router's system log (logread). */
+    fun fetchSystemLog(): String {
+        val json = withSession { getRaw(logsUrl()) }
+        if (!json.optBoolean("ok", false)) {
+            throw LuciActionException(json.optString("error", "Gagal memuat log"))
+        }
+        return json.optString("log", "")
     }
 
     fun registerFcmToken(token: String) {
