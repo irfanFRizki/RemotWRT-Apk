@@ -100,7 +100,7 @@ class MainActivity : ComponentActivity() {
 
 private enum class Screen { SETUP, MAIN }
 
-private enum class BottomTab { HOME, DEVICES, TERMINAL, SETTINGS }
+private enum class BottomTab { HOME, DEVICES, LOGS, SETTINGS }
 
 @Composable
 private fun MainScaffold(prefs: Prefs, onLogout: () -> Unit) {
@@ -114,7 +114,7 @@ private fun MainScaffold(prefs: Prefs, onLogout: () -> Unit) {
             when (tab) {
                 BottomTab.HOME -> HomeTabContent(prefs)
                 BottomTab.DEVICES -> DevicesTabContent(prefs)
-                BottomTab.TERMINAL -> TerminalTabContent(prefs)
+                BottomTab.LOGS -> LogsTabContent(prefs)
                 BottomTab.SETTINGS -> SettingsTabContent(prefs, onLogout = onLogout)
             }
         }
@@ -126,7 +126,7 @@ private fun AppHeader(tab: BottomTab, prefs: Prefs) {
     val (title, subtitleFallback) = when (tab) {
         BottomTab.HOME -> "RemotWRT Bot" to "Aman"
         BottomTab.DEVICES -> "Perangkat Jaringan" to "Kelola Device"
-        BottomTab.TERMINAL -> "Web Terminal" to "Akses via Browser"
+        BottomTab.LOGS -> "Log Sistem" to "logread router"
         BottomTab.SETTINGS -> "Preferensi" to "Konfigurasi Aplikasi"
     }
     val domain = remember(prefs.baseUrl) {
@@ -190,10 +190,10 @@ private fun AppBottomNav(current: BottomTab, onSelect: (BottomTab) -> Unit) {
             label = { Text("Devices") }
         )
         NavigationBarItem(
-            selected = current == BottomTab.TERMINAL,
-            onClick = { onSelect(BottomTab.TERMINAL) },
-            icon = { Icon(Icons.Filled.Terminal, contentDescription = null) },
-            label = { Text("Terminal") }
+            selected = current == BottomTab.LOGS,
+            onClick = { onSelect(BottomTab.LOGS) },
+            icon = { Icon(Icons.Filled.Description, contentDescription = null) },
+            label = { Text("Logs") }
         )
         NavigationBarItem(
             selected = current == BottomTab.SETTINGS,
@@ -1366,248 +1366,97 @@ private fun DeviceRow(
 // ==================== Terminal tab ====================
 
 @Composable
-fun TerminalTabContent(prefs: Prefs) {
-    var confirmReboot by remember { mutableStateOf(false) }
-    var rebootResult by remember { mutableStateOf<String?>(null) }
+fun LogsTabContent(prefs: Prefs) {
+    var logText by remember { mutableStateOf<String?>(null) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var loading by remember { mutableStateOf(false) }
+    var refreshTick by remember { mutableStateOf(0) }
+    var showRebootConfirm by remember { mutableStateOf(false) }
     var rebooting by remember { mutableStateOf(false) }
+    var rebootResult by remember { mutableStateOf<String?>(null) }
     val scope = androidx.compose.runtime.rememberCoroutineScope()
 
-    Column(modifier = Modifier.fillMaxSize()) {
-        if (prefs.terminalUrl.isBlank()) {
-            Box(Modifier.weight(1f).fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Icon(
-                        Icons.Filled.Terminal,
-                        contentDescription = null,
-                        modifier = Modifier.size(48.dp),
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Spacer(Modifier.height(12.dp))
-                    Text(
-                        "Belum ada URL Web Terminal. Atur dulu di tab Settings.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
-                    )
+    suspend fun reload() {
+        loading = true
+        withContext(Dispatchers.IO) {
+            try {
+                val result = LuciClient(prefs).fetchSystemLog()
+                withContext(Dispatchers.Main) {
+                    logText = result
+                    error = null
                 }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) { error = "Gagal memuat log: ${e.message}" }
             }
-        } else {
-            Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
-                var loadError by remember { mutableStateOf<String?>(null) }
-                var loadProgress by remember { mutableStateOf(0) }
-                var reloadTick by remember { mutableStateOf(0) }
-                var consoleLogs by remember { mutableStateOf<List<String>>(emptyList()) }
-                var showConsoleLog by remember { mutableStateOf(false) }
-                // Toggle for a known Android WebView bug class: a WebGL canvas
-                // (like ttyd/xterm.js's WebGL renderer) can render internally but
-                // never actually composite onto the screen, leaving a blank page
-                // even though the console shows no errors. Forcing the opposite
-                // layer type is the commonly-documented workaround -- exposed here
-                // as a live toggle so it can be tested without a rebuild.
-                var useHardwareLayer by remember { mutableStateOf(true) }
+        }
+        loading = false
+    }
 
-                androidx.compose.runtime.key(reloadTick) {
-                    AndroidView(
-                        factory = { ctx ->
-                            // Lets a PC with Chrome + USB cable inspect this WebView
-                            // fully via chrome://inspect -- safe to leave on since this
-                            // app is never distributed publicly.
-                            android.webkit.WebView.setWebContentsDebuggingEnabled(true)
+    LaunchedEffect(refreshTick) { reload() }
 
-                            android.webkit.WebView(ctx).apply {
-                                setLayerType(
-                                    if (useHardwareLayer) android.view.View.LAYER_TYPE_HARDWARE
-                                    else android.view.View.LAYER_TYPE_SOFTWARE,
-                                    null
-                                )
-                                settings.javaScriptEnabled = true
-                                settings.domStorageEnabled = true
-                                settings.databaseEnabled = true
-                                // Without these, WebView can render the page zoomed out as a
-                                // "desktop site" at a fixed ~980px virtual width instead of
-                                // respecting ttyd's actual viewport/CSS sizing -- a mismatch
-                                // between the terminal's real pixel size and what xterm.js
-                                // measures can leave the canvas blank.
-                                settings.useWideViewPort = true
-                                settings.loadWithOverviewMode = true
-                                // ttyd's own asset delivery sometimes mixes http/https
-                                // sub-resources behind a tunnel -- without this, newer
-                                // WebView silently blocks them and the page just looks
-                                // blank with no visible error.
-                                settings.mixedContentMode =
-                                    android.webkit.WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
+    Column(modifier = Modifier.fillMaxSize()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 8.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text("Log Sistem (logread)", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+            IconButton(onClick = { refreshTick++ }) {
+                Icon(Icons.Filled.Refresh, contentDescription = "Refresh")
+            }
+        }
 
-                                webChromeClient = object : android.webkit.WebChromeClient() {
-                                    override fun onProgressChanged(view: android.webkit.WebView?, newProgress: Int) {
-                                        loadProgress = newProgress
-                                    }
-                                    // ttyd's frontend (xterm.js) can fail to render with
-                                    // NO network-level error at all -- the HTML shell loads
-                                    // fine, but a JS exception stops the terminal from ever
-                                    // mounting, leaving a blank white page. This is the only
-                                    // way to actually see why.
-                                    override fun onConsoleMessage(msg: android.webkit.ConsoleMessage?): Boolean {
-                                        msg?.let {
-                                            val line = "[${it.messageLevel()}] ${it.message()} (${it.sourceId()}:${it.lineNumber()})"
-                                            consoleLogs = (consoleLogs + line).takeLast(50)
-                                        }
-                                        return true
-                                    }
-                                }
-                                webViewClient = object : android.webkit.WebViewClient() {
-                                    override fun onPageStarted(view: android.webkit.WebView?, url: String?, favicon: android.graphics.Bitmap?) {
-                                        loadError = null
-                                    }
-                                    override fun onPageFinished(view: android.webkit.WebView?, url: String?) {
-                                        // ttyd's xterm.js canvas can end up sized 0x0 if its
-                                        // ResizeObserver doesn't fire correctly inside an
-                                        // embedded WebView (matches the "ResizeObserver loop
-                                        // completed with undelivered notifications" console
-                                        // warning) -- the page "loads" and the renderer
-                                        // initializes, but nothing visible ever gets drawn.
-                                        // Forcing a couple of delayed resize events nudges
-                                        // xterm.js's fit-addon to recompute against the
-                                        // WebView's real final layout size.
-                                        view?.postDelayed({
-                                            view.evaluateJavascript(
-                                                "window.dispatchEvent(new Event('resize'));", null
-                                            )
-                                        }, 300)
-                                        view?.postDelayed({
-                                            view.evaluateJavascript(
-                                                "window.dispatchEvent(new Event('resize'));", null
-                                            )
-                                        }, 1000)
-                                    }
-                                    override fun onReceivedError(
-                                        view: android.webkit.WebView?,
-                                        request: android.webkit.WebResourceRequest?,
-                                        error: android.webkit.WebResourceError?
-                                    ) {
-                                        // Only surface errors for the main frame -- a failed
-                                        // sub-resource (e.g. a favicon) shouldn't blank the
-                                        // whole terminal view.
-                                        if (request?.isForMainFrame != false) {
-                                            loadError = "Gagal memuat: ${error?.description ?: "unknown error"}"
-                                        }
-                                    }
-                                    override fun onReceivedHttpError(
-                                        view: android.webkit.WebView?,
-                                        request: android.webkit.WebResourceRequest?,
-                                        errorResponse: android.webkit.WebResourceResponse?
-                                    ) {
-                                        if (request?.isForMainFrame != false) {
-                                            loadError = "Server membalas HTTP ${errorResponse?.statusCode}"
-                                        }
-                                    }
-                                    override fun onReceivedSslError(
-                                        view: android.webkit.WebView?,
-                                        handler: android.webkit.SslErrorHandler?,
-                                        error: android.net.http.SslError?
-                                    ) {
-                                        // Do NOT bypass -- just surface it, so a real cert
-                                        // problem is visible instead of a silent blank page.
-                                        loadError = "Error sertifikat SSL: ${error?.primaryError}"
-                                        handler?.cancel()
-                                    }
-                                }
-                                loadUrl(prefs.terminalUrl)
-                            }
-                        },
-                        modifier = Modifier.fillMaxSize()
-                    )
-                }
+        error?.let {
+            Text(
+                it,
+                color = MaterialTheme.colorScheme.error,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+            )
+        }
 
-                if (loadProgress in 1..99 && loadError == null) {
-                    LinearProgressIndicator(
-                        progress = loadProgress / 100f,
-                        modifier = Modifier.fillMaxWidth().align(Alignment.TopCenter)
-                    )
-                }
-
-                // Small diagnostic toolbar -- always visible over the WebView so it's
-                // usable even when the page is blank (no error banner to hang off of).
-                if (loadError == null) {
-                    val diagContext = androidx.compose.ui.platform.LocalContext.current
-                    Row(
-                        modifier = Modifier
-                            .align(Alignment.BottomCenter)
-                            .padding(8.dp),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        if (consoleLogs.isNotEmpty()) {
-                            OutlinedButton(onClick = { showConsoleLog = true }) {
-                                Text("Log Konsol (${consoleLogs.size})")
-                            }
-                        }
-                        OutlinedButton(onClick = {
-                            val intent = android.content.Intent(
-                                android.content.Intent.ACTION_VIEW,
-                                android.net.Uri.parse(prefs.terminalUrl)
-                            )
-                            diagContext.startActivity(intent)
-                        }) {
-                            Text("Buka di Browser")
-                        }
-                        OutlinedButton(onClick = {
-                            useHardwareLayer = !useHardwareLayer
-                            reloadTick++
-                        }) {
-                            Text(if (useHardwareLayer) "Mode: Hardware" else "Mode: Software")
-                        }
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp)
+        ) {
+            when {
+                loading && logText == null -> {
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        CircularProgressIndicator()
                     }
                 }
-
-                if (showConsoleLog) {
-                    AlertDialog(
-                        onDismissRequest = { showConsoleLog = false },
-                        title = { Text("Log Konsol JS") },
-                        text = {
-                            Text(
-                                if (consoleLogs.isEmpty()) "Belum ada log." else consoleLogs.joinToString("\n\n"),
-                                style = MaterialTheme.typography.bodySmall,
-                                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
-                                modifier = Modifier.verticalScroll(rememberScrollState())
-                            )
-                        },
-                        confirmButton = {
-                            TextButton(onClick = { showConsoleLog = false }) { Text("Tutup") }
-                        }
-                    )
-                }
-
-                loadError?.let { message ->
-                    Column(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .background(MaterialTheme.colorScheme.background)
-                            .padding(24.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.Center
+                logText != null -> {
+                    val scrollState = rememberScrollState()
+                    // Auto-scroll to the bottom (newest lines) whenever the log refreshes.
+                    LaunchedEffect(logText) { scrollState.animateScrollTo(scrollState.maxValue) }
+                    Surface(
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
+                        shape = MaterialTheme.shapes.medium,
+                        modifier = Modifier.fillMaxSize()
                     ) {
-                        Icon(
-                            Icons.Filled.ErrorOutline,
-                            contentDescription = null,
-                            modifier = Modifier.size(40.dp),
-                            tint = com.remotwrt.bot.ui.theme.RemotRed
-                        )
-                        Spacer(Modifier.height(12.dp))
                         Text(
-                            message,
-                            style = MaterialTheme.typography.bodyMedium,
-                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                            logText!!.ifBlank { "(log kosong)" },
+                            style = MaterialTheme.typography.bodySmall,
+                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .verticalScroll(scrollState)
+                                .padding(12.dp)
                         )
-                        Spacer(Modifier.height(16.dp))
-                        OutlinedButton(onClick = {
-                            loadError = null
-                            reloadTick++
-                        }) { Text("Coba Lagi") }
                     }
                 }
             }
         }
 
-        Column(modifier = Modifier.padding(16.dp)) {
+        Spacer(Modifier.height(12.dp))
+
+        // Reboot button, carried over from the old Terminal tab -- this uses the
+        // dedicated /reboot endpoint directly, not the generic named-command
+        // system, so it works out of the box with no extra UCI setup.
+        Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
             rebootResult?.let {
                 Text(
                     it,
@@ -1617,7 +1466,7 @@ fun TerminalTabContent(prefs: Prefs) {
                 )
             }
             OutlinedButton(
-                onClick = { confirmReboot = true },
+                onClick = { showRebootConfirm = true },
                 enabled = !rebooting,
                 colors = ButtonDefaults.outlinedButtonColors(contentColor = com.remotwrt.bot.ui.theme.RemotRed),
                 modifier = Modifier.fillMaxWidth()
@@ -1626,7 +1475,7 @@ fun TerminalTabContent(prefs: Prefs) {
                     CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
                     Spacer(Modifier.width(8.dp))
                 } else {
-                    Icon(Icons.Filled.Power, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Icon(Icons.Filled.PowerSettingsNew, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(6.dp))
                 }
                 Text("Reboot Router")
@@ -1634,14 +1483,14 @@ fun TerminalTabContent(prefs: Prefs) {
         }
     }
 
-    if (confirmReboot) {
+    if (showRebootConfirm) {
         AlertDialog(
-            onDismissRequest = { confirmReboot = false },
+            onDismissRequest = { showRebootConfirm = false },
             title = { Text("Reboot Router?") },
-            text = { Text("Router akan restart dan koneksi akan terputus sebentar. Lanjutkan?") },
+            text = { Text("Router akan restart. Koneksi semua device akan terputus sebentar.") },
             confirmButton = {
                 TextButton(onClick = {
-                    confirmReboot = false
+                    showRebootConfirm = false
                     rebooting = true
                     scope.launch {
                         val output = withContext(Dispatchers.IO) {
@@ -1658,7 +1507,7 @@ fun TerminalTabContent(prefs: Prefs) {
                 }) { Text("Reboot", color = com.remotwrt.bot.ui.theme.RemotRed) }
             },
             dismissButton = {
-                TextButton(onClick = { confirmReboot = false }) { Text("Batal") }
+                TextButton(onClick = { showRebootConfirm = false }) { Text("Batal") }
             }
         )
     }
@@ -1672,7 +1521,6 @@ fun SettingsTabContent(prefs: Prefs, onLogout: () -> Unit) {
     val scope = androidx.compose.runtime.rememberCoroutineScope()
 
     var baseUrl by remember { mutableStateOf(prefs.baseUrl) }
-    var terminalUrl by remember { mutableStateOf(prefs.terminalUrl) }
     var username by remember { mutableStateOf(prefs.username) }
     var password by remember { mutableStateOf(prefs.password) }
     var saving by remember { mutableStateOf(false) }
@@ -1693,15 +1541,6 @@ fun SettingsTabContent(prefs: Prefs, onLogout: () -> Unit) {
             value = baseUrl,
             onValueChange = { baseUrl = it },
             label = { Text("Router API URL (LuCI)") },
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth()
-        )
-        Spacer(Modifier.height(12.dp))
-        OutlinedTextField(
-            value = terminalUrl,
-            onValueChange = { terminalUrl = it },
-            label = { Text("Terminal Web URL (ttyd)") },
-            placeholder = { Text("https://terminal.domain.my.id") },
             singleLine = true,
             modifier = Modifier.fillMaxWidth()
         )
@@ -1740,7 +1579,6 @@ fun SettingsTabContent(prefs: Prefs, onLogout: () -> Unit) {
                 saveMessage = null
                 saving = true
                 prefs.baseUrl = baseUrl
-                prefs.terminalUrl = terminalUrl
                 prefs.username = username
                 prefs.password = password
                 scope.launch {
