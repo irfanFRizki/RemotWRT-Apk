@@ -100,7 +100,7 @@ class MainActivity : ComponentActivity() {
 
 private enum class Screen { SETUP, MAIN }
 
-private enum class BottomTab { HOME, DEVICES, LOGS, SETTINGS }
+private enum class BottomTab { HOME, DEVICES, ADGUARD, LOGS, SETTINGS }
 
 @Composable
 private fun MainScaffold(prefs: Prefs, onLogout: () -> Unit) {
@@ -114,6 +114,7 @@ private fun MainScaffold(prefs: Prefs, onLogout: () -> Unit) {
             when (tab) {
                 BottomTab.HOME -> HomeTabContent(prefs)
                 BottomTab.DEVICES -> DevicesTabContent(prefs)
+                BottomTab.ADGUARD -> AdguardTabContent(prefs)
                 BottomTab.LOGS -> LogsTabContent(prefs)
                 BottomTab.SETTINGS -> SettingsTabContent(prefs, onLogout = onLogout)
             }
@@ -126,6 +127,7 @@ private fun AppHeader(tab: BottomTab, prefs: Prefs) {
     val (title, subtitleFallback) = when (tab) {
         BottomTab.HOME -> "RemotWRT Bot" to "Aman"
         BottomTab.DEVICES -> "Perangkat Jaringan" to "Kelola Device"
+        BottomTab.ADGUARD -> "AdGuard Home" to "Filtering DNS"
         BottomTab.LOGS -> "Log Sistem" to "logread router"
         BottomTab.SETTINGS -> "Preferensi" to "Konfigurasi Aplikasi"
     }
@@ -188,6 +190,12 @@ private fun AppBottomNav(current: BottomTab, onSelect: (BottomTab) -> Unit) {
             onClick = { onSelect(BottomTab.DEVICES) },
             icon = { Icon(Icons.Filled.Devices, contentDescription = null) },
             label = { Text("Devices") }
+        )
+        NavigationBarItem(
+            selected = current == BottomTab.ADGUARD,
+            onClick = { onSelect(BottomTab.ADGUARD) },
+            icon = { Icon(Icons.Filled.Shield, contentDescription = null) },
+            label = { Text("AdGuard") }
         )
         NavigationBarItem(
             selected = current == BottomTab.LOGS,
@@ -1363,7 +1371,801 @@ private fun DeviceRow(
     }
 }
 
-// ==================== Terminal tab ====================
+// ==================== AdGuard Home tab ====================
+
+private enum class AdguardSubTab(val label: String) {
+    OVERVIEW("Overview"), QUERYLOG("Query Log"), FILTERS("Filters"), SECURITY("Security"), RULES("Rules")
+}
+
+@Composable
+fun AdguardTabContent(prefs: Prefs) {
+    var subTab by remember { mutableStateOf(AdguardSubTab.OVERVIEW) }
+
+    Column(modifier = Modifier.fillMaxSize()) {
+        ScrollableTabRow(selectedTabIndex = subTab.ordinal, edgePadding = 12.dp) {
+            AdguardSubTab.entries.forEach { t ->
+                Tab(selected = subTab == t, onClick = { subTab = t }, text = { Text(t.label) })
+            }
+        }
+        Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+            when (subTab) {
+                AdguardSubTab.OVERVIEW -> AdguardOverviewTab(prefs)
+                AdguardSubTab.QUERYLOG -> AdguardQueryLogTab(prefs)
+                AdguardSubTab.FILTERS -> AdguardFiltersTab(prefs)
+                AdguardSubTab.SECURITY -> AdguardSecurityTab(prefs)
+                AdguardSubTab.RULES -> AdguardRulesTab(prefs)
+            }
+        }
+    }
+}
+
+// ---- Overview ----
+
+@Composable
+private fun AdguardOverviewTab(prefs: Prefs) {
+    var overview by remember { mutableStateOf<com.remotwrt.bot.data.AdguardOverview?>(null) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var refreshTick by remember { mutableStateOf(0) }
+    var showProtectionConfirm by remember { mutableStateOf<Boolean?>(null) } // target state to confirm
+    var applying by remember { mutableStateOf(false) }
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+
+    suspend fun reload() {
+        withContext(Dispatchers.IO) {
+            try {
+                val result = LuciClient(prefs).fetchAdguardOverview()
+                withContext(Dispatchers.Main) { overview = result; error = null }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    error = "Tidak bisa terhubung ke AdGuard Home: ${e.message}"
+                }
+            }
+        }
+    }
+
+    LaunchedEffect(refreshTick) { reload() }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(16.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.End
+        ) {
+            IconButton(onClick = { refreshTick++ }) {
+                Icon(Icons.Filled.Refresh, contentDescription = "Refresh")
+            }
+        }
+
+        error?.let {
+            Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(bottom = 12.dp))
+        }
+
+        val o = overview
+        if (o == null && error == null) {
+            Box(Modifier.fillMaxWidth().padding(top = 40.dp), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator()
+            }
+        } else if (o != null) {
+            InfoCard("Status", Icons.Filled.Shield) {
+                StatRowPill(
+                    "Service",
+                    if (o.running) "Berjalan" else "Offline",
+                    if (o.running) com.remotwrt.bot.ui.theme.RemotGreen else com.remotwrt.bot.ui.theme.RemotRed,
+                    pulsing = o.running
+                )
+                StatRowPill(
+                    "Protection",
+                    if (o.protectionEnabled) "Aktif" else "Nonaktif",
+                    if (o.protectionEnabled) com.remotwrt.bot.ui.theme.RemotGreen else com.remotwrt.bot.ui.theme.RemotRed
+                )
+                StatRow("Versi", o.version)
+                StatRow("DNS Port", "${o.dnsPort}")
+                Spacer(Modifier.height(10.dp))
+                if (applying) {
+                    Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                        CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                    }
+                } else {
+                    Button(
+                        onClick = { showProtectionConfirm = !o.protectionEnabled },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = if (o.protectionEnabled)
+                            ButtonDefaults.buttonColors(containerColor = com.remotwrt.bot.ui.theme.RemotRed)
+                        else ButtonDefaults.buttonColors()
+                    ) {
+                        Text(if (o.protectionEnabled) "Matikan Protection" else "Aktifkan Protection")
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(12.dp))
+            InfoCard("Statistik (24 jam)", Icons.Filled.BarChart) {
+                StatRow("Total Query", "${o.numDnsQueries}")
+                StatRow("Query Diblokir", "${o.numBlockedFiltering}")
+                StatRow("Persentase Blokir", "${"%.1f".format(o.blockedPct)}%")
+                StatRow("Klien Aktif", "${o.numClients}")
+                if (o.avgProcessingMs > 0) {
+                    StatRow("Rata-rata Respons", "${"%.1f".format(o.avgProcessingMs)} ms")
+                }
+            }
+
+            Spacer(Modifier.height(12.dp))
+            InfoCard("DNS", Icons.Filled.Dns) {
+                StatRowPill(
+                    "DNSSEC",
+                    if (o.dnssecEnabled) "Aktif" else "Nonaktif",
+                    if (o.dnssecEnabled) com.remotwrt.bot.ui.theme.RemotGreen else MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                if (o.upstreamDns.isNotEmpty()) {
+                    Spacer(Modifier.height(6.dp))
+                    Text("Upstream DNS:", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium)
+                    o.upstreamDns.forEach { u ->
+                        Text(
+                            u,
+                            style = MaterialTheme.typography.bodySmall,
+                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    showProtectionConfirm?.let { target ->
+        AlertDialog(
+            onDismissRequest = { showProtectionConfirm = null },
+            title = { Text(if (target) "Aktifkan Protection?" else "Matikan Protection?") },
+            text = {
+                Text(
+                    if (target) "Filtering DNS AdGuard Home akan diaktifkan kembali."
+                    else "Semua perangkat di jaringan TIDAK akan terlindungi filtering DNS sampai diaktifkan lagi."
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    val t = target
+                    showProtectionConfirm = null
+                    applying = true
+                    scope.launch {
+                        try {
+                            withContext(Dispatchers.IO) { LuciClient(prefs).setAdguardProtection(t) }
+                        } catch (_: Exception) { /* surfaced on next reload via error state */ }
+                        applying = false
+                        reload()
+                    }
+                }) { Text("Ya, Lanjutkan") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showProtectionConfirm = null }) { Text("Batal") }
+            }
+        )
+    }
+}
+
+// ---- Query Log ----
+
+@Composable
+private fun AdguardQueryLogTab(prefs: Prefs) {
+    var entries by remember { mutableStateOf<List<com.remotwrt.bot.data.AdguardQueryLogEntry>?>(null) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var search by remember { mutableStateOf("") }
+    var refreshTick by remember { mutableStateOf(0) }
+    var actionTarget by remember { mutableStateOf<com.remotwrt.bot.data.AdguardQueryLogEntry?>(null) }
+    var busy by remember { mutableStateOf(false) }
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+
+    suspend fun reload() {
+        withContext(Dispatchers.IO) {
+            try {
+                val result = LuciClient(prefs).fetchAdguardQueryLog(search = search, limit = 60)
+                withContext(Dispatchers.Main) { entries = result; error = null }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) { error = "Gagal memuat query log: ${e.message}" }
+            }
+        }
+    }
+
+    LaunchedEffect(refreshTick) { reload() }
+
+    Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+            OutlinedTextField(
+                value = search,
+                onValueChange = { search = it },
+                label = { Text("Cari domain/klien") },
+                singleLine = true,
+                modifier = Modifier.weight(1f),
+                keyboardActions = androidx.compose.foundation.text.KeyboardActions(onSearch = { refreshTick++ }),
+                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                    imeAction = androidx.compose.ui.text.input.ImeAction.Search
+                )
+            )
+            Spacer(Modifier.width(8.dp))
+            IconButton(onClick = { refreshTick++ }) {
+                Icon(Icons.Filled.Refresh, contentDescription = "Refresh")
+            }
+        }
+
+        error?.let {
+            Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 8.dp))
+        }
+
+        val list = entries
+        if (list == null && error == null) {
+            Box(Modifier.fillMaxWidth().padding(top = 40.dp), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator()
+            }
+        } else if (list != null && list.isEmpty()) {
+            Box(Modifier.fillMaxWidth().padding(top = 40.dp), contentAlignment = Alignment.Center) {
+                Text("Tidak ada query.", style = MaterialTheme.typography.bodyMedium)
+            }
+        } else if (list != null) {
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(vertical = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                items(list, key = { it.time + it.domain }) { entry ->
+                    ElevatedCard(
+                        modifier = Modifier.fillMaxWidth().clickable { actionTarget = entry }
+                    ) {
+                        Column(Modifier.padding(12.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    entry.domain,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.Medium,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                Badge(
+                                    if (entry.blocked) "Diblokir" else "Diizinkan",
+                                    if (entry.blocked) com.remotwrt.bot.ui.theme.RemotRed else com.remotwrt.bot.ui.theme.RemotGreen
+                                )
+                            }
+                            Spacer(Modifier.height(4.dp))
+                            Text(
+                                "${entry.type} • ${entry.client} • ${entry.time}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            if (entry.reason.isNotBlank()) {
+                                Text(
+                                    entry.reason,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    actionTarget?.let { entry ->
+        AlertDialog(
+            onDismissRequest = { if (!busy) actionTarget = null },
+            title = { Text(entry.domain) },
+            text = { Text("Pilih aksi untuk domain ini.") },
+            confirmButton = {
+                if (busy) {
+                    CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                } else {
+                    Row {
+                        TextButton(onClick = {
+                            busy = true
+                            scope.launch {
+                                try {
+                                    withContext(Dispatchers.IO) {
+                                        LuciClient(prefs).setAdguardQueryLogAction(entry.domain, "whitelist")
+                                    }
+                                } catch (_: Exception) { }
+                                busy = false
+                                actionTarget = null
+                                reload()
+                            }
+                        }) { Text("Whitelist") }
+                        TextButton(onClick = {
+                            busy = true
+                            scope.launch {
+                                try {
+                                    withContext(Dispatchers.IO) {
+                                        LuciClient(prefs).setAdguardQueryLogAction(entry.domain, "block")
+                                    }
+                                } catch (_: Exception) { }
+                                busy = false
+                                actionTarget = null
+                                reload()
+                            }
+                        }) { Text("Blokir", color = com.remotwrt.bot.ui.theme.RemotRed) }
+                    }
+                }
+            },
+            dismissButton = {
+                if (!busy) TextButton(onClick = { actionTarget = null }) { Text("Tutup") }
+            }
+        )
+    }
+}
+
+// ---- Filters ----
+
+@Composable
+private fun AdguardFiltersTab(prefs: Prefs) {
+    var filters by remember { mutableStateOf<List<com.remotwrt.bot.data.AdguardFilter>?>(null) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var refreshTick by remember { mutableStateOf(0) }
+    var busyUrl by remember { mutableStateOf<String?>(null) }
+    var showAddDialog by remember { mutableStateOf(false) }
+    var deleteTarget by remember { mutableStateOf<com.remotwrt.bot.data.AdguardFilter?>(null) }
+    var refreshingAll by remember { mutableStateOf(false) }
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+
+    suspend fun reload() {
+        withContext(Dispatchers.IO) {
+            try {
+                val result = LuciClient(prefs).fetchAdguardFilters()
+                withContext(Dispatchers.Main) { filters = result; error = null }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) { error = "Gagal memuat filter: ${e.message}" }
+            }
+        }
+    }
+
+    LaunchedEffect(refreshTick) { reload() }
+
+    Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            val list = filters
+            Text(
+                if (list != null) "${list.count { it.enabled }} dari ${list.size} aktif" else "Memuat...",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Row {
+                IconButton(onClick = { showAddDialog = true }) {
+                    Icon(Icons.Filled.Add, contentDescription = "Tambah Filter")
+                }
+                IconButton(onClick = { refreshTick++ }) {
+                    Icon(Icons.Filled.Refresh, contentDescription = "Refresh")
+                }
+            }
+        }
+
+        Button(
+            onClick = {
+                refreshingAll = true
+                scope.launch {
+                    try {
+                        withContext(Dispatchers.IO) {
+                            LuciClient(prefs).setAdguardFilterAction("refresh")
+                        }
+                    } catch (_: Exception) { }
+                    refreshingAll = false
+                    reload()
+                }
+            },
+            enabled = !refreshingAll,
+            modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
+        ) {
+            if (refreshingAll) {
+                CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                Spacer(Modifier.width(8.dp))
+            }
+            Text("Update Semua Filter")
+        }
+
+        error?.let {
+            Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 8.dp))
+        }
+
+        val list = filters
+        if (list == null && error == null) {
+            Box(Modifier.fillMaxWidth().padding(top = 40.dp), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator()
+            }
+        } else if (list != null) {
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(vertical = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                items(list, key = { it.url }) { filter ->
+                    ElevatedCard(modifier = Modifier.fillMaxWidth()) {
+                        Column(Modifier.padding(12.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    filter.name.ifBlank { filter.url },
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.Medium,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                if (busyUrl == filter.url) {
+                                    CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                                } else {
+                                    Switch(
+                                        checked = filter.enabled,
+                                        onCheckedChange = { newVal ->
+                                            busyUrl = filter.url
+                                            scope.launch {
+                                                try {
+                                                    withContext(Dispatchers.IO) {
+                                                        LuciClient(prefs).setAdguardFilterAction(
+                                                            "toggle", url = filter.url, name = filter.name, enabled = newVal
+                                                        )
+                                                    }
+                                                } catch (_: Exception) { }
+                                                busyUrl = null
+                                                reload()
+                                            }
+                                        }
+                                    )
+                                }
+                            }
+                            Text(
+                                filter.url,
+                                style = MaterialTheme.typography.labelSmall,
+                                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Text(
+                                "${filter.rulesCount} rules • update terakhir: ${filter.lastUpdated}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Spacer(Modifier.height(6.dp))
+                            TextButton(onClick = { deleteTarget = filter }) {
+                                Text("Hapus", color = com.remotwrt.bot.ui.theme.RemotRed)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if (showAddDialog) {
+        var newName by remember { mutableStateOf("") }
+        var newUrl by remember { mutableStateOf("") }
+        var adding by remember { mutableStateOf(false) }
+        var addError by remember { mutableStateOf<String?>(null) }
+
+        AlertDialog(
+            onDismissRequest = { if (!adding) showAddDialog = false },
+            title = { Text("Tambah Filter") },
+            text = {
+                Column {
+                    OutlinedTextField(
+                        value = newName,
+                        onValueChange = { newName = it },
+                        label = { Text("Nama") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = newUrl,
+                        onValueChange = { newUrl = it },
+                        label = { Text("URL filter (https://...)") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    addError?.let {
+                        Spacer(Modifier.height(6.dp))
+                        Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = !adding,
+                    onClick = {
+                        if (!newUrl.startsWith("http://") && !newUrl.startsWith("https://")) {
+                            addError = "URL harus diawali http:// atau https://"
+                            return@TextButton
+                        }
+                        adding = true
+                        addError = null
+                        scope.launch {
+                            try {
+                                withContext(Dispatchers.IO) {
+                                    LuciClient(prefs).setAdguardFilterAction("add", url = newUrl, name = newName)
+                                }
+                                showAddDialog = false
+                                reload()
+                            } catch (e: Exception) {
+                                addError = e.message
+                            }
+                            adding = false
+                        }
+                    }
+                ) { Text(if (adding) "Menambahkan..." else "Tambah") }
+            },
+            dismissButton = {
+                TextButton(onClick = { if (!adding) showAddDialog = false }) { Text("Batal") }
+            }
+        )
+    }
+
+    deleteTarget?.let { filter ->
+        AlertDialog(
+            onDismissRequest = { deleteTarget = null },
+            title = { Text("Hapus Filter?") },
+            text = { Text("Filter \"${filter.name.ifBlank { filter.url }}\" akan dihapus.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    val target = filter
+                    deleteTarget = null
+                    scope.launch {
+                        try {
+                            withContext(Dispatchers.IO) {
+                                LuciClient(prefs).setAdguardFilterAction("remove", url = target.url)
+                            }
+                        } catch (_: Exception) { }
+                        reload()
+                    }
+                }) { Text("Hapus", color = com.remotwrt.bot.ui.theme.RemotRed) }
+            },
+            dismissButton = {
+                TextButton(onClick = { deleteTarget = null }) { Text("Batal") }
+            }
+        )
+    }
+}
+
+// ---- Security & DNS ----
+
+@Composable
+private fun AdguardSecurityTab(prefs: Prefs) {
+    var security by remember { mutableStateOf<com.remotwrt.bot.data.AdguardSecurity?>(null) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var refreshTick by remember { mutableStateOf(0) }
+    var pendingToggle by remember { mutableStateOf<Pair<String, Boolean>?>(null) } // feature to enabled-target
+    var applying by remember { mutableStateOf(false) }
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+
+    suspend fun reload() {
+        withContext(Dispatchers.IO) {
+            try {
+                val result = LuciClient(prefs).fetchAdguardSecurity()
+                withContext(Dispatchers.Main) { security = result; error = null }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) { error = "Gagal memuat pengaturan: ${e.message}" }
+            }
+        }
+    }
+
+    LaunchedEffect(refreshTick) { reload() }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(16.dp)
+    ) {
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+            IconButton(onClick = { refreshTick++ }) {
+                Icon(Icons.Filled.Refresh, contentDescription = "Refresh")
+            }
+        }
+        error?.let {
+            Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(bottom = 8.dp))
+        }
+
+        val s = security
+        if (s == null && error == null) {
+            Box(Modifier.fillMaxWidth().padding(top = 40.dp), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator()
+            }
+        } else if (s != null) {
+            InfoCard("Keamanan", Icons.Filled.Security) {
+                SecurityToggleRow("Safe Search", s.safeSearchEnabled, applying) { target ->
+                    pendingToggle = "safesearch" to target
+                }
+                SecurityToggleRow("Parental Control", s.parentalEnabled, applying) { target ->
+                    pendingToggle = "parental" to target
+                }
+                SecurityToggleRow("Safe Browsing", s.safeBrowsingEnabled, applying) { target ->
+                    pendingToggle = "safebrowsing" to target
+                }
+                SecurityToggleRow("DNSSEC", s.dnssecEnabled, applying) { target ->
+                    pendingToggle = "dnssec" to target
+                }
+            }
+
+            Spacer(Modifier.height(12.dp))
+            InfoCard("DNS", Icons.Filled.Dns) {
+                StatRow("Ukuran Cache", "${s.cacheSize} B")
+                if (s.upstreamDns.isNotEmpty()) {
+                    Spacer(Modifier.height(6.dp))
+                    Text("Upstream DNS:", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium)
+                    s.upstreamDns.forEach { u ->
+                        Text(
+                            u,
+                            style = MaterialTheme.typography.bodySmall,
+                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    pendingToggle?.let { (feature, target) ->
+        val label = when (feature) {
+            "safesearch" -> "Safe Search"
+            "parental" -> "Parental Control"
+            "safebrowsing" -> "Safe Browsing"
+            "dnssec" -> "DNSSEC"
+            else -> feature
+        }
+        AlertDialog(
+            onDismissRequest = { pendingToggle = null },
+            title = { Text(if (target) "Aktifkan $label?" else "Matikan $label?") },
+            text = { Text("Perubahan ini langsung diterapkan ke AdGuard Home.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    pendingToggle = null
+                    applying = true
+                    scope.launch {
+                        try {
+                            withContext(Dispatchers.IO) {
+                                LuciClient(prefs).setAdguardSecurityToggle(feature, target)
+                            }
+                        } catch (_: Exception) { }
+                        applying = false
+                        reload()
+                    }
+                }) { Text("Ya, Lanjutkan") }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingToggle = null }) { Text("Batal") }
+            }
+        )
+    }
+}
+
+@Composable
+private fun SecurityToggleRow(label: String, checked: Boolean, disabled: Boolean, onRequestChange: (Boolean) -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(label, style = MaterialTheme.typography.bodyMedium)
+        Switch(checked = checked, enabled = !disabled, onCheckedChange = { onRequestChange(it) })
+    }
+}
+
+// ---- Custom Rules ----
+
+@Composable
+private fun AdguardRulesTab(prefs: Prefs) {
+    var originalRules by remember { mutableStateOf<String?>(null) }
+    var rulesText by remember { mutableStateOf("") }
+    var error by remember { mutableStateOf<String?>(null) }
+    var saving by remember { mutableStateOf(false) }
+    var showSaveConfirm by remember { mutableStateOf(false) }
+    var refreshTick by remember { mutableStateOf(0) }
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+
+    LaunchedEffect(refreshTick) {
+        withContext(Dispatchers.IO) {
+            try {
+                val result = LuciClient(prefs).fetchAdguardRules()
+                withContext(Dispatchers.Main) {
+                    originalRules = result
+                    rulesText = result
+                    error = null
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) { error = "Gagal memuat custom rules: ${e.message}" }
+            }
+        }
+    }
+
+    val dirty = originalRules != null && rulesText != originalRules
+
+    Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
+        Text(
+            "Satu aturan per baris. Contoh: ||contoh-iklan.com^ untuk blokir, " +
+                "@@||situs-aman.com^ untuk izinkan.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(Modifier.height(8.dp))
+
+        error?.let {
+            Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(bottom = 8.dp))
+        }
+
+        if (originalRules == null && error == null) {
+            Box(Modifier.fillMaxWidth().padding(top = 40.dp), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator()
+            }
+        } else {
+            OutlinedTextField(
+                value = rulesText,
+                onValueChange = { rulesText = it },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f),
+                textStyle = androidx.compose.ui.text.TextStyle(
+                    fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                    fontSize = androidx.compose.ui.unit.TextUnit(13f, androidx.compose.ui.unit.TextUnitType.Sp)
+                ),
+                placeholder = { Text("||contoh-domain.com^") }
+            )
+
+            Spacer(Modifier.height(10.dp))
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(
+                    onClick = { rulesText = originalRules ?: "" },
+                    enabled = dirty && !saving,
+                    modifier = Modifier.weight(1f)
+                ) { Text("Reset") }
+                Button(
+                    onClick = { showSaveConfirm = true },
+                    enabled = dirty && !saving,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    if (saving) {
+                        CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                        Spacer(Modifier.width(8.dp))
+                    }
+                    Text("Simpan")
+                }
+            }
+        }
+    }
+
+    if (showSaveConfirm) {
+        AlertDialog(
+            onDismissRequest = { showSaveConfirm = false },
+            title = { Text("Simpan Custom Rules?") },
+            text = { Text("Aturan ini akan langsung diterapkan ke AdGuard Home.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    showSaveConfirm = false
+                    saving = true
+                    val toSave = rulesText
+                    scope.launch {
+                        try {
+                            withContext(Dispatchers.IO) { LuciClient(prefs).saveAdguardRules(toSave) }
+                            originalRules = toSave
+                            error = null
+                        } catch (e: Exception) {
+                            error = "Gagal menyimpan: ${e.message}"
+                        }
+                        saving = false
+                    }
+                }) { Text("Ya, Simpan") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showSaveConfirm = false }) { Text("Batal") }
+            }
+        )
+    }
+}
+
 
 @Composable
 fun LogsTabContent(prefs: Prefs) {

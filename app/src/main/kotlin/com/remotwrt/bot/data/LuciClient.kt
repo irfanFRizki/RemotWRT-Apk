@@ -46,6 +46,16 @@ class LuciClient(private val prefs: Prefs) {
     private fun namedDevicesUrl() = "${prefs.baseUrl}/cgi-bin/luci/admin/services/remotbot/named_devices"
     private fun rebootUrl() = "${prefs.baseUrl}/cgi-bin/luci/admin/services/remotbot/reboot"
     private fun logsUrl() = "${prefs.baseUrl}/cgi-bin/luci/admin/services/remotbot/logs"
+    private fun adguardOverviewUrl() = "${prefs.baseUrl}/cgi-bin/luci/admin/services/remotbot/adguard_overview"
+    private fun adguardProtectionUrl() = "${prefs.baseUrl}/cgi-bin/luci/admin/services/remotbot/adguard_protection"
+    private fun adguardQuerylogUrl() = "${prefs.baseUrl}/cgi-bin/luci/admin/services/remotbot/adguard_querylog"
+    private fun adguardQuerylogActionUrl() = "${prefs.baseUrl}/cgi-bin/luci/admin/services/remotbot/adguard_querylog_action"
+    private fun adguardFiltersUrl() = "${prefs.baseUrl}/cgi-bin/luci/admin/services/remotbot/adguard_filters"
+    private fun adguardFilterActionUrl() = "${prefs.baseUrl}/cgi-bin/luci/admin/services/remotbot/adguard_filter_action"
+    private fun adguardSecurityUrl() = "${prefs.baseUrl}/cgi-bin/luci/admin/services/remotbot/adguard_security"
+    private fun adguardSecurityToggleUrl() = "${prefs.baseUrl}/cgi-bin/luci/admin/services/remotbot/adguard_security_toggle"
+    private fun adguardRulesUrl() = "${prefs.baseUrl}/cgi-bin/luci/admin/services/remotbot/adguard_rules"
+    private fun adguardRulesSaveUrl() = "${prefs.baseUrl}/cgi-bin/luci/admin/services/remotbot/adguard_rules_save"
     private fun runCommandUrl() = "${prefs.baseUrl}/cgi-bin/luci/admin/services/remotbot/run_command"
     private fun loginUrl() = "${prefs.baseUrl}/cgi-bin/luci/"
 
@@ -293,5 +303,163 @@ class LuciClient(private val prefs: Prefs) {
             throw LuciActionException(json.optString("error", "Gagal menjalankan command"))
         }
         return json.optString("output", "")
+    }
+
+    // ==================== AdGuard Home ====================
+
+    fun fetchAdguardOverview(): AdguardOverview {
+        val json = withSession { getRaw(adguardOverviewUrl()) }
+        if (!json.optBoolean("ok", false)) {
+            throw LuciActionException(json.optString("error", "Gagal memuat status AdGuard Home"))
+        }
+        val upstream = mutableListOf<String>()
+        json.optJSONArray("upstream_dns")?.let { arr ->
+            for (i in 0 until arr.length()) upstream.add(arr.optString(i))
+        }
+        return AdguardOverview(
+            running = json.optBoolean("running", false),
+            protectionEnabled = json.optBoolean("protection_enabled", false),
+            version = json.optString("version", "-"),
+            dnsPort = json.optInt("dns_port", 0),
+            numDnsQueries = json.optLong("num_dns_queries", 0),
+            numBlockedFiltering = json.optLong("num_blocked_filtering", 0),
+            blockedPct = json.optDouble("blocked_pct", 0.0),
+            avgProcessingMs = json.optDouble("avg_processing_ms", 0.0),
+            numClients = json.optInt("num_clients", 0),
+            dnssecEnabled = json.optBoolean("dnssec_enabled", false),
+            upstreamDns = upstream
+        )
+    }
+
+    fun setAdguardProtection(enabled: Boolean) {
+        val form = FormBody.Builder()
+            .add("enabled", enabled.toString())
+            .build()
+        val json = withSession { postRaw(adguardProtectionUrl(), form) }
+        if (!json.optBoolean("ok", false)) {
+            throw LuciActionException(json.optString("error", "Gagal mengubah protection"))
+        }
+    }
+
+    fun fetchAdguardQueryLog(search: String = "", limit: Int = 50): List<AdguardQueryLogEntry> {
+        val url = buildString {
+            append(adguardQuerylogUrl())
+            append("?limit=").append(limit)
+            if (search.isNotBlank()) {
+                append("&search=").append(java.net.URLEncoder.encode(search, "UTF-8"))
+            }
+        }
+        val json = withSession { getRaw(url) }
+        if (!json.optBoolean("ok", false)) {
+            throw LuciActionException(json.optString("error", "Gagal memuat query log"))
+        }
+        val arr = json.optJSONArray("entries") ?: JSONArray()
+        return (0 until arr.length()).map { i ->
+            val e = arr.getJSONObject(i)
+            val reason = e.optString("reason", "")
+            AdguardQueryLogEntry(
+                time = e.optString("time", "-"),
+                domain = e.optJSONObject("question")?.optString("host") ?: e.optString("question", "-"),
+                type = e.optJSONObject("question")?.optString("type") ?: "-",
+                client = e.optString("client", "-"),
+                blocked = reason.startsWith("Filtered") || reason == "Blocked" || reason.contains("Block"),
+                reason = reason,
+                upstream = e.optString("upstream", "-"),
+                elapsedMs = e.optString("elapsedMs", "0").toDoubleOrNull() ?: 0.0
+            )
+        }
+    }
+
+    /** [action] must be "block" or "whitelist". Appends a single-domain rule, never touches other rules. */
+    fun setAdguardQueryLogAction(domain: String, action: String) {
+        val form = FormBody.Builder()
+            .add("domain", domain)
+            .add("action", action)
+            .build()
+        val json = withSession { postRaw(adguardQuerylogActionUrl(), form) }
+        if (!json.optBoolean("ok", false)) {
+            throw LuciActionException(json.optString("error", "Aksi gagal"))
+        }
+    }
+
+    fun fetchAdguardFilters(): List<AdguardFilter> {
+        val json = withSession { getRaw(adguardFiltersUrl()) }
+        if (!json.optBoolean("ok", false)) {
+            throw LuciActionException(json.optString("error", "Gagal memuat filter"))
+        }
+        val arr = json.optJSONArray("filters") ?: JSONArray()
+        return (0 until arr.length()).map { i ->
+            val f = arr.getJSONObject(i)
+            AdguardFilter(
+                url = f.optString("url", ""),
+                name = f.optString("name", "-"),
+                enabled = f.optBoolean("enabled", false),
+                rulesCount = f.optInt("rules_count", 0),
+                lastUpdated = f.optString("last_updated", "-")
+            )
+        }
+    }
+
+    /** [action] must be one of "add", "remove", "toggle", "refresh". */
+    fun setAdguardFilterAction(action: String, url: String = "", name: String = "", enabled: Boolean = false) {
+        val form = FormBody.Builder()
+            .add("action", action)
+            .add("url", url)
+            .add("name", name)
+            .add("enabled", enabled.toString())
+            .build()
+        val json = withSession { postRaw(adguardFilterActionUrl(), form) }
+        if (!json.optBoolean("ok", false)) {
+            throw LuciActionException(json.optString("error", "Aksi filter gagal"))
+        }
+    }
+
+    fun fetchAdguardSecurity(): AdguardSecurity {
+        val json = withSession { getRaw(adguardSecurityUrl()) }
+        if (!json.optBoolean("ok", false)) {
+            throw LuciActionException(json.optString("error", "Gagal memuat pengaturan keamanan"))
+        }
+        val upstream = mutableListOf<String>()
+        json.optJSONArray("upstream_dns")?.let { arr ->
+            for (i in 0 until arr.length()) upstream.add(arr.optString(i))
+        }
+        return AdguardSecurity(
+            safeSearchEnabled = json.optBoolean("safesearch_enabled", false),
+            safeBrowsingEnabled = json.optBoolean("safebrowsing_enabled", false),
+            parentalEnabled = json.optBoolean("parental_enabled", false),
+            dnssecEnabled = json.optBoolean("dnssec_enabled", false),
+            cacheSize = json.optInt("cache_size", 0),
+            upstreamDns = upstream
+        )
+    }
+
+    /** [feature] must be one of "safesearch", "safebrowsing", "parental", "dnssec". */
+    fun setAdguardSecurityToggle(feature: String, enabled: Boolean) {
+        val form = FormBody.Builder()
+            .add("feature", feature)
+            .add("enabled", enabled.toString())
+            .build()
+        val json = withSession { postRaw(adguardSecurityToggleUrl(), form) }
+        if (!json.optBoolean("ok", false)) {
+            throw LuciActionException(json.optString("error", "Gagal mengubah pengaturan"))
+        }
+    }
+
+    fun fetchAdguardRules(): String {
+        val json = withSession { getRaw(adguardRulesUrl()) }
+        if (!json.optBoolean("ok", false)) {
+            throw LuciActionException(json.optString("error", "Gagal memuat custom rules"))
+        }
+        return json.optString("rules", "")
+    }
+
+    fun saveAdguardRules(rules: String) {
+        val form = FormBody.Builder()
+            .add("rules", rules)
+            .build()
+        val json = withSession { postRaw(adguardRulesSaveUrl(), form) }
+        if (!json.optBoolean("ok", false)) {
+            throw LuciActionException(json.optString("error", "Gagal menyimpan custom rules"))
+        }
     }
 }
