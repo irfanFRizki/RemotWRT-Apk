@@ -2292,6 +2292,7 @@ private fun DiskDetailRow(label: String, value: String, valueColor: Color = Colo
     }
 }
 
+@Composable
 fun LogsTabContent(prefs: Prefs) {
     var logText by remember { mutableStateOf<String?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
