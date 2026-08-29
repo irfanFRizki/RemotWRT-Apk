@@ -33,3 +33,11 @@ uci commit remotbot
 
 Nilai dibatasi ke 50–1000 dan default-nya 500. Perangkat yang memakai Private
 DNS, DoH/DoT, VPN DNS, atau DNS selain AdGuard Home tidak dapat dikategorikan.
+
+## Endpoint disk read-only
+
+Tab **Memori** pada Android membaca endpoint `remotbot/disks`. Endpoint tersebut
+memakai `luci.model.diskman` yang sama dengan halaman DiskMan untuk menampilkan
+path, model, serial number, size, temperature, partition table, SATA/NVMe
+version, serta health/status dan partisi. Tidak ada endpoint format, mount,
+unmount, atau aksi disk destruktif yang diekspos ke aplikasi.

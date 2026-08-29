@@ -44,6 +44,7 @@ class LuciClient(private val prefs: Prefs) {
     private fun registerFcmUrl() = "${prefs.baseUrl}/cgi-bin/luci/admin/services/remotbot/register_fcm"
     private fun commandsUrl() = "${prefs.baseUrl}/cgi-bin/luci/admin/services/remotbot/commands"
     private fun namedDevicesUrl() = "${prefs.baseUrl}/cgi-bin/luci/admin/services/remotbot/named_devices"
+    private fun disksUrl() = "${prefs.baseUrl}/cgi-bin/luci/admin/services/remotbot/disks"
     private fun rebootUrl() = "${prefs.baseUrl}/cgi-bin/luci/admin/services/remotbot/reboot"
     private fun logsUrl() = "${prefs.baseUrl}/cgi-bin/luci/admin/services/remotbot/logs"
     private fun adguardOverviewUrl() = "${prefs.baseUrl}/cgi-bin/luci/admin/services/remotbot/adguard_overview"
@@ -245,6 +246,40 @@ class LuciClient(private val prefs: Prefs) {
                 online = d.optBoolean("online", false),
                 status = d.optString("status", "TIDAK TERHUBUNG"),
                 categories = categories
+            )
+        }
+    }
+
+    /** Fetches the read-only disk inventory exposed from luci-app-diskman. */
+    fun fetchDisks(): List<DiskInfo> {
+        val json = withSession { getRaw(disksUrl()) }
+        if (!json.optBoolean("ok", false)) {
+            throw LuciActionException(json.optString("error", "Gagal memuat informasi memori"))
+        }
+        val arr = json.optJSONArray("disks") ?: JSONArray()
+        return (0 until arr.length()).map { i ->
+            val d = arr.getJSONObject(i)
+            val parts = d.optJSONArray("partitions") ?: JSONArray()
+            DiskInfo(
+                path = d.optString("path", "-"),
+                model = d.optString("model", "-"),
+                serialNumber = d.optString("serial_number", "-"),
+                size = d.optString("size", "-"),
+                temperature = d.optString("temperature", "-"),
+                partitionTable = d.optString("partition_table", "-"),
+                sataVersion = d.optString("sata_version", "-"),
+                health = d.optString("health", "-"),
+                status = d.optString("status", "-"),
+                partitions = (0 until parts.length()).map { j ->
+                    val p = parts.getJSONObject(j)
+                    DiskPartitionInfo(
+                        name = p.optString("name", "-"),
+                        size = p.optString("size_formated", "-"),
+                        fileSystem = p.optString("fs", "-"),
+                        mountPoint = p.optString("mount_point", "-"),
+                        usage = p.optString("usage", "-")
+                    )
+                }
             )
         }
     }

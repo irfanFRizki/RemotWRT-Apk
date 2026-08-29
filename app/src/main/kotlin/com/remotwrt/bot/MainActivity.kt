@@ -100,7 +100,7 @@ class MainActivity : ComponentActivity() {
 
 private enum class Screen { SETUP, MAIN }
 
-private enum class BottomTab { HOME, DEVICES, ADGUARD, LOGS, SETTINGS }
+private enum class BottomTab { HOME, DEVICES, MEMORY, ADGUARD, LOGS, SETTINGS }
 
 @Composable
 private fun MainScaffold(prefs: Prefs, onLogout: () -> Unit) {
@@ -114,6 +114,7 @@ private fun MainScaffold(prefs: Prefs, onLogout: () -> Unit) {
             when (tab) {
                 BottomTab.HOME -> HomeTabContent(prefs)
                 BottomTab.DEVICES -> DevicesTabContent(prefs)
+                BottomTab.MEMORY -> MemoryTabContent(prefs)
                 BottomTab.ADGUARD -> AdguardTabContent(prefs)
                 BottomTab.LOGS -> LogsTabContent(prefs)
                 BottomTab.SETTINGS -> SettingsTabContent(prefs, onLogout = onLogout)
@@ -127,6 +128,7 @@ private fun AppHeader(tab: BottomTab, prefs: Prefs) {
     val (title, subtitleFallback) = when (tab) {
         BottomTab.HOME -> "RemotWRT Bot" to "Aman"
         BottomTab.DEVICES -> "Perangkat Jaringan" to "Kelola Device"
+        BottomTab.MEMORY -> "Memori" to "Informasi Disk"
         BottomTab.ADGUARD -> "AdGuard Home" to "Filtering DNS"
         BottomTab.LOGS -> "Log Sistem" to "logread router"
         BottomTab.SETTINGS -> "Preferensi" to "Konfigurasi Aplikasi"
@@ -190,6 +192,12 @@ private fun AppBottomNav(current: BottomTab, onSelect: (BottomTab) -> Unit) {
             onClick = { onSelect(BottomTab.DEVICES) },
             icon = { Icon(Icons.Filled.Devices, contentDescription = null) },
             label = { Text("Devices") }
+        )
+        NavigationBarItem(
+            selected = current == BottomTab.MEMORY,
+            onClick = { onSelect(BottomTab.MEMORY) },
+            icon = { Icon(Icons.Filled.Storage, contentDescription = null) },
+            label = { Text("Memori") }
         )
         NavigationBarItem(
             selected = current == BottomTab.ADGUARD,
@@ -2168,6 +2176,122 @@ private fun AdguardRulesTab(prefs: Prefs) {
 
 
 @Composable
+fun MemoryTabContent(prefs: Prefs) {
+    var disks by remember { mutableStateOf<List<com.remotwrt.bot.data.DiskInfo>?>(null) }
+    var loading by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
+
+    fun reload() {
+        scope.launch {
+            loading = true
+            error = null
+            try {
+                disks = withContext(Dispatchers.IO) { LuciClient(prefs).fetchDisks() }
+            } catch (e: Exception) {
+                error = e.message ?: "Gagal memuat informasi memori"
+            } finally {
+                loading = false
+            }
+        }
+    }
+
+    LaunchedEffect(Unit) { reload() }
+
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        item {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column {
+                    Text("Disk & Storage", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                    Text("Data read-only dari DiskMan", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                IconButton(onClick = ::reload, enabled = !loading) {
+                    if (loading) CircularProgressIndicator(modifier = Modifier.size(22.dp), strokeWidth = 2.dp)
+                    else Icon(Icons.Filled.Refresh, contentDescription = "Muat ulang")
+                }
+            }
+        }
+
+        error?.let { message ->
+            item {
+                ElevatedCard(colors = CardDefaults.elevatedCardColors(containerColor = com.remotwrt.bot.ui.theme.RemotRed.copy(alpha = 0.12f))) {
+                    Text(message, modifier = Modifier.padding(14.dp), color = com.remotwrt.bot.ui.theme.RemotRed)
+                }
+            }
+        }
+
+        if (!loading && error == null && disks?.isEmpty() == true) {
+            item {
+                Text("Tidak ada disk fisik yang terdeteksi.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+
+        disks?.let { list ->
+            items(list, key = { it.path }) { disk -> DiskInfoCard(disk) }
+        }
+    }
+}
+
+@Composable
+private fun DiskInfoCard(disk: com.remotwrt.bot.data.DiskInfo) {
+    val healthy = disk.health.equals("PASSED", ignoreCase = true) ||
+        disk.health.equals("OK", ignoreCase = true)
+    val healthColor = when {
+        healthy -> com.remotwrt.bot.ui.theme.RemotGreen
+        disk.health == "-" -> MaterialTheme.colorScheme.onSurfaceVariant
+        else -> com.remotwrt.bot.ui.theme.RemotRed
+    }
+
+    ElevatedCard(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                Icon(Icons.Filled.Storage, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                Spacer(Modifier.width(8.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(disk.model, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                    Text(disk.path, style = MaterialTheme.typography.bodySmall, fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace)
+                }
+                Text(disk.size, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+            }
+
+            HorizontalDivider()
+            DiskDetailRow("Serial Number", disk.serialNumber)
+            DiskDetailRow("Temp", disk.temperature)
+            DiskDetailRow("Partition Table", disk.partitionTable)
+            DiskDetailRow("SATA Version", disk.sataVersion)
+            DiskDetailRow("Health Status", "${disk.health} · ${disk.status}", healthColor)
+
+            if (disk.partitions.isNotEmpty()) {
+                Spacer(Modifier.height(2.dp))
+                Text("Partitions", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
+                disk.partitions.filter { it.name != "-" }.forEach { partition ->
+                    Text(
+                        "${partition.name} · ${partition.size} · ${partition.fileSystem} · ${partition.mountPoint} · ${partition.usage}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun DiskDetailRow(label: String, value: String, valueColor: Color = Color.Unspecified) {
+    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+        Text(label, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(value, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium, color = valueColor)
+    }
+}
+
 fun LogsTabContent(prefs: Prefs) {
     var logText by remember { mutableStateOf<String?>(null) }
     var error by remember { mutableStateOf<String?>(null) }

@@ -26,6 +26,9 @@ via cloudflared, jadi tidak perlu buka port apa pun di router.
   Query Log AdGuard Home untuk mengelompokkan domain DNS terbaru per alamat IP ke
   Sosmed, Game, Belanja, dan Streaming. Nama serta ikon khusus dari `vpn.html` tetap
   dapat dipakai, tetapi tidak lagi menjadi syarat agar perangkat muncul.
+- **Tab Memori** — inventaris disk read-only berbasis DiskMan: path, model, serial
+  number, kapasitas, suhu, partition table, versi SATA/NVMe, health/status, dan
+  ringkasan partisi/mount point.
 - **Kredensial tersimpan aman** — URL server, username, password LuCI, dan cookie sesi
   disimpan di `EncryptedSharedPreferences` (dienkripsi AES256, per-device keystore),
   bukan plain text.
