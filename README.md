@@ -22,6 +22,10 @@ via cloudflared, jadi tidak perlu buka port apa pun di router.
 
   Notifikasi hanya dikirim saat terjadi *perubahan status* (bukan tiap 15 menit selama
   kondisi bertahan), supaya tidak spam.
+- **Kategori aktivitas perangkat tanpa OpenClash** — daftar perangkat online memakai
+  Query Log AdGuard Home untuk mengelompokkan domain DNS terbaru per alamat IP ke
+  Sosmed, Game, Belanja, dan Streaming. Nama serta ikon khusus dari `vpn.html` tetap
+  dapat dipakai, tetapi tidak lagi menjadi syarat agar perangkat muncul.
 - **Kredensial tersimpan aman** — URL server, username, password LuCI, dan cookie sesi
   disimpan di `EncryptedSharedPreferences` (dienkripsi AES256, per-device keystore),
   bukan plain text.
@@ -83,6 +87,28 @@ app/src/main/kotlin/com/remotwrt/bot/
   cookie sesi untuk request berikutnya, sama seperti browser biasa.
 - `android:usesCleartextTraffic="false"` dipasang di manifest — app akan menolak
   request HTTP biasa (non-HTTPS), sesuai dengan setup cloudflared Anda.
+
+## Kategori aplikasi melalui AdGuard Home
+
+Endpoint `named_devices` di `luci-app-remotbot` harus menggunakan versi controller
+yang sudah diperbarui. Pada router ini, perubahan tersebut telah diterapkan ke
+`/usr/lib/lua/luci/controller/remotbot.lua`; detail deployment tersedia di
+`router/README.md`.
+
+Pastikan `remotbot.main.adguard_url`, `adguard_username`, dan `adguard_password` sudah
+diisi seperti untuk tab AdGuard pada aplikasi. Opsional, jumlah entri Query Log yang
+dipindai dapat diatur (default `500`, minimum `50`, maksimum `1000`):
+
+```sh
+uci set remotbot.main.adguard_category_limit='500'
+uci commit remotbot
+/etc/init.d/uhttpd restart
+```
+
+Semua perangkat harus memakai AdGuard Home sebagai DNS agar aktivitasnya tercatat.
+Private DNS, DNS-over-HTTPS/DNS-over-TLS, atau DNS yang dibypass langsung dari perangkat
+tidak akan muncul sebagai kategori. Kategori menunjukkan domain/layanan yang diakses,
+bukan identitas aplikasi Android secara mutlak.
 
 ## Pengembangan lanjutan (opsional)
 
