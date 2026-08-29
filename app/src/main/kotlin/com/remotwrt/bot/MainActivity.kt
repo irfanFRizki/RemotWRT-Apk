@@ -545,14 +545,13 @@ private fun QuickStatCard(
 private fun QuickStatsGrid(s: RemotbotStatus) {
     Column {
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            val cpuOver = s.cpuTemp != null && s.cpuTemp > s.cpuTempLimit
             QuickStatCard(
                 icon = Icons.Filled.Memory,
-                label = "CPU Usage",
-                value = if (s.cpuTemp != null) "${s.cpuTemp}\u00B0C" else "N/A",
-                badge = "Load ${s.load1}",
-                progress = if (s.cpuTemp != null && s.cpuTempLimit > 0) (s.cpuTemp / s.cpuTempLimit).toFloat() else null,
-                progressColor = if (cpuOver) com.remotwrt.bot.ui.theme.RemotRed else MaterialTheme.colorScheme.primary,
+                label = "CPU Load",
+                value = s.load1,
+                badge = null,
+                progress = null,
+                progressColor = Color.Unspecified,
                 modifier = Modifier.weight(1f)
             )
             val ramOver = s.memPct > s.ramLimit
@@ -568,13 +567,14 @@ private fun QuickStatsGrid(s: RemotbotStatus) {
         }
         Spacer(Modifier.height(12.dp))
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            val cpuOver = s.cpuTemp != null && s.cpuTemp > s.cpuTempLimit
             QuickStatCard(
                 icon = Icons.Filled.Thermostat,
                 label = "Temperature",
                 value = if (s.cpuTemp != null) "${s.cpuTemp}\u00B0C" else "N/A",
                 badge = null,
-                progress = null,
-                progressColor = Color.Unspecified,
+                progress = if (s.cpuTemp != null && s.cpuTempLimit > 0) (s.cpuTemp / s.cpuTempLimit).toFloat() else null,
+                progressColor = if (cpuOver) com.remotwrt.bot.ui.theme.RemotRed else MaterialTheme.colorScheme.primary,
                 modifier = Modifier.weight(1f)
             )
             QuickStatCard(
