@@ -1,0 +1,30 @@
+#!/bin/sh
+# Keep a small, local cache of Netify flow classifications for RemotWRTBot.
+
+SOCKET="/var/run/netifyd/netifyd.sock"
+CACHE="/tmp/remotbot_netify_flows.tsv"
+MAX_AGE=900
+
+prune_cache() {
+	[ -f "$CACHE" ] || return 0
+	now="$(date +%s)"
+	awk -F '\t' -v now="$now" -v age="$MAX_AGE" '($1 ~ /^[0-9]+$/ && now - $1 <= age)' "$CACHE" > "$CACHE.new" && mv "$CACHE.new" "$CACHE"
+}
+
+while :; do
+	[ -S "$SOCKET" ] || { sleep 5; continue; }
+	prune_cache
+	socat -u UNIX-CONNECT:"$SOCKET" - 2>/dev/null | while IFS= read -r event; do
+		type="$(printf '%s' "$event" | jsonfilter -e '@.type' 2>/dev/null)"
+		[ "$type" = "flow" ] || continue
+		ip="$(printf '%s' "$event" | jsonfilter -e '@.flow.local_ip' 2>/dev/null)"
+		other_ip="$(printf '%s' "$event" | jsonfilter -e '@.flow.other_ip' 2>/dev/null)"
+		app="$(printf '%s' "$event" | jsonfilter -e '@.flow.detected_application_name' 2>/dev/null)"
+		host="$(printf '%s' "$event" | jsonfilter -e '@.flow.host_server_name' 2>/dev/null)"
+		[ -n "$app$host" ] || continue
+		seen="$(date +%s)"
+		case "$ip" in *.*.*.*) printf '%s\t%s\t%s\t%s\n' "$seen" "$ip" "$app" "$host" >> "$CACHE" ;; esac
+		case "$other_ip" in *.*.*.*) printf '%s\t%s\t%s\t%s\n' "$seen" "$other_ip" "$app" "$host" >> "$CACHE" ;; esac
+	done
+	sleep 2
+done

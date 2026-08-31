@@ -22,10 +22,12 @@ via cloudflared, jadi tidak perlu buka port apa pun di router.
 
   Notifikasi hanya dikirim saat terjadi *perubahan status* (bukan tiap 15 menit selama
   kondisi bertahan), supaya tidak spam.
-- **Kategori aktivitas perangkat tanpa OpenClash** — daftar perangkat online memakai
-  Query Log AdGuard Home untuk mengelompokkan domain DNS terbaru per alamat IP ke
-  Sosmed, Game, Belanja, dan Streaming. Nama serta ikon khusus dari `vpn.html` tetap
-  dapat dipakai, tetapi tidak lagi menjadi syarat agar perangkat muncul.
+- **Kategori aktivitas perangkat live** — daftar perangkat online memakai Netify
+  untuk mendeteksi aplikasi langsung dari paket di LAN, lalu mengelompokkan trafik
+  per alamat IP ke Sosmed, Game, Belanja, dan Streaming. `wrtbwmon` melengkapi data
+  bandwidth per perangkat dan `nlbwmon` menyimpan riwayat pemakaian. Nama serta ikon
+  khusus dari `vpn.html` tetap dapat dipakai, tetapi tidak lagi menjadi syarat agar
+  perangkat muncul.
 - **Tab Memori** — inventaris disk read-only berbasis DiskMan: path, model, serial
   number, kapasitas, suhu, partition table, versi SATA/NVMe, health/status, dan
   ringkasan partisi/mount point.
@@ -91,27 +93,36 @@ app/src/main/kotlin/com/remotwrt/bot/
 - `android:usesCleartextTraffic="false"` dipasang di manifest — app akan menolak
   request HTTP biasa (non-HTTPS), sesuai dengan setup cloudflared Anda.
 
-## Kategori aplikasi melalui AdGuard Home
+## Kategori aplikasi dan trafik live tanpa proxy/VPN
 
 Endpoint `named_devices` di `luci-app-remotbot` harus menggunakan versi controller
 yang sudah diperbarui. Pada router ini, perubahan tersebut telah diterapkan ke
 `/usr/lib/lua/luci/controller/remotbot.lua`; detail deployment tersedia di
 `router/README.md`.
 
-Pastikan `remotbot.main.adguard_url`, `adguard_username`, dan `adguard_password` sudah
-diisi seperti untuk tab AdGuard pada aplikasi. Opsional, jumlah entri Query Log yang
-dipindai dapat diatur (default `500`, minimum `50`, maksimum `1000`):
+Gunakan kombinasi native OpenWrt berikut, yang tidak memerlukan OpenClash, AdGuard
+Query Log, Docker, maupun API monitoring yang diekspos ke jaringan:
+
+- `netifyd` mengklasifikasikan flow live per aplikasi dari interface LAN/WAN.
+- `wrtbwmon` menyediakan penggunaan dan kecepatan bandwidth per IP/perangkat.
+- `nlbwmon` menyimpan riwayat pemakaian bandwidth per perangkat.
+
+Skrip collector dan konfigurasi lengkap tersedia pada `router/openwrt-live-traffic/`.
+Pada router ini collector membaca socket UNIX lokal Netify dan menyimpan cache 15 menit;
+endpoint `named_devices` hanya membaca cache tersebut. Konfigurasinya:
 
 ```sh
-uci set remotbot.main.adguard_category_limit='500'
-uci commit remotbot
-/etc/init.d/uhttpd restart
+uci set netifyd.@netifyd[0].enabled='1'
+uci set netifyd.@netifyd[0].autoconfig='0'
+uci add_list netifyd.@netifyd[0].internal_if='br-lan'
+uci add_list netifyd.@netifyd[0].external_if='eth1'
+uci commit netifyd
+/etc/init.d/netifyd restart
 ```
 
-Semua perangkat harus memakai AdGuard Home sebagai DNS agar aktivitasnya tercatat.
-Private DNS, DNS-over-HTTPS/DNS-over-TLS, atau DNS yang dibypass langsung dari perangkat
-tidak akan muncul sebagai kategori. Kategori menunjukkan domain/layanan yang diakses,
-bukan identitas aplikasi Android secara mutlak.
+Ganti `br-lan` dan `eth1` sesuai interface LAN/WAN router. Kategori terbaik tersedia
+saat Netify dapat mengenali aplikasi atau hostname/SNI; flow yang hanya dikenal sebagai
+TLS/QUIC generik memang tidak dapat dipetakan ke aplikasi spesifik.
 
 ## Pengembangan lanjutan (opsional)
 
