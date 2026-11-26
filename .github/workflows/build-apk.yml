@@ -3,25 +3,31 @@ name: Build APK
 on:
   push:
     branches: [ "main" ]
-  workflow_dispatch: {}
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch:
+    inputs:
+      skip_release:
+        description: 'Build signed APK + fingerprint check WITHOUT creating a Release'
+        type: boolean
+        default: true
 
 permissions:
-  contents: write   # needed to create the GitHub Release below
+  contents: write   # needed to create the GitHub Release on push main
 
 jobs:
   build:
     runs-on: ubuntu-latest
     env:
-      # `if:` conditions can't reference `secrets.*` directly (GitHub Actions
-      # restriction) -- routing it through a job-level env var first works
-      # around that, since `env.*` IS allowed in `if:`.
+      # HAS_SIGNING is true only when the repo has the signing secrets configured.
+      # For PRs from forks, secrets are not available → HAS_SIGNING will be 'false'.
       HAS_SIGNING: ${{ secrets.RELEASE_KEYSTORE_BASE64 != '' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
       - name: Set up JDK 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
@@ -30,7 +36,7 @@ jobs:
         uses: android-actions/setup-android@v3
 
       - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v3
+        uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: 8.7
 
@@ -43,13 +49,9 @@ jobs:
           name: RemotWRTBot-debug-apk
           path: app/build/outputs/apk/debug/app-debug.apk
 
-      # Decodes the RELEASE_KEYSTORE_BASE64 secret (see README for how to
-      # generate/add it) into a real .keystore file, and exposes its path +
-      # passwords as env vars that app/build.gradle.kts reads to sign the
-      # release build. If the secret isn't configured yet, this step is
-      # skipped and the release build below falls back to being unsigned
-      # (matches the previous behavior) -- the in-app updater just won't
-      # have anything newer to offer until signing is set up.
+      # Decode release keystore — runs only when HAS_SIGNING is true.
+      # For PRs from forks, secrets are not accessible → this step is skipped
+      # and the release build falls back to unsigned (no signing env vars set).
       - name: Decode release keystore
         if: ${{ env.HAS_SIGNING == 'true' }}
         run: |
@@ -59,24 +61,110 @@ jobs:
           echo "RELEASE_KEY_ALIAS=${{ secrets.RELEASE_KEY_ALIAS }}" >> "$GITHUB_ENV"
           echo "RELEASE_KEY_PASSWORD=${{ secrets.RELEASE_KEY_PASSWORD }}" >> "$GITHUB_ENV"
 
-      # versionCode = this workflow run's number, so it's always increasing
-      # and always matches the release tag (vN) below -- the Android app
-      # compares its own BuildConfig.VERSION_CODE against that tag to decide
-      # whether an update is available.
-      - name: Build signed release APK
+      # Build signed release APK:
+      # - On push main: always (HAS_SIGNING controls whether signed or unsigned)
+      # - On pull_request from THIS repo: signed (secrets available)
+      # - On pull_request from FORK: unsigned (secrets NOT available)
+      # - On workflow_dispatch: signed (skip_release controls Release creation, not signing)
+      - name: Build release APK
         run: gradle assembleRelease -PverCode=${{ github.run_number }} --no-daemon
 
-      - name: Upload release APK artifact
+      # Verify release APK fingerprint against v47 release key.
+      # Runs for ALL triggers that produce a signed APK (i.e. when HAS_SIGNING == 'true').
+      # Fails the build if fingerprint MISMATCH.
+      - name: Verify release APK fingerprint
+        if: ${{ env.HAS_SIGNING == 'true' }}
+        run: |
+          set -euo pipefail
+          APK=$(ls app/build/outputs/apk/release/app-release*.apk 2>/dev/null | head -n1)
+          if [ -z "$APK" ]; then
+            echo "::error::Release APK not found"
+            exit 1
+          fi
+
+          EXPECTED_FINGERPRINT="D0:86:64:F1:13:E7:E5:67:00:93:35:48:5B:F3:58:0B:64:F2:C1:C5:02:17:76:BF:0D:AB:66:26:F6:E1:2A:FD"
+
+          # Locate apksigner (no apt-get; use runner's Android SDK)
+          find_apksigner() {
+            local dir="$1" matches=""
+            for p in "$dir"/*/apksigner; do
+              [ -x "$p" ] && matches+="${p}"$'\n'
+            done
+            if [ -n "$matches" ]; then
+              printf '%s' "$matches" | sort -V | tail -n1
+            fi
+          }
+
+          BUILD_TOOLS_DIR="/usr/local/lib/android/sdk/build-tools"
+          APKSIGNER=$(find_apksigner "$BUILD_TOOLS_DIR")
+
+          if [ -z "$APKSIGNER" ]; then
+            echo "::error::Could not locate apksigner under $BUILD_TOOLS_DIR"
+            exit 1
+          fi
+
+          echo "Using apksigner: $APKSIGNER"
+
+          # Extract SHA-256 fingerprint from APK signing certificate
+          if ! CERT_INFO=$("$APKSIGNER" verify --print-certs "$APK" 2>&1); then
+            APKSIGNER_EXIT=$?
+            echo "::error::apksigner verify failed with exit code $APKSIGNER_EXIT"
+            echo "$CERT_INFO"
+            exit "$APKSIGNER_EXIT"
+          fi
+
+          # Parse SHA-256 digest from apksigner output (handles both formats)
+          RAW_FP=$(printf '%s\n' "$CERT_INFO" | grep -i 'SHA-256 digest:' | head -n1 | sed -E 's/.*SHA-256 digest:[[:space:]]*//' || true)
+
+          if [ -z "$RAW_FP" ]; then
+            echo "::error::Could not extract SHA-256 fingerprint from APK using apksigner"
+            echo "apksigner output:"
+            echo "$CERT_INFO"
+            exit 1
+          fi
+
+          # Normalize both fingerprints (lowercase, no colons)
+          normalize() { printf '%s' "$1" | tr -d ':' | tr '[:upper:]' '[:lower:]'; }
+          EXP=$(normalize "$EXPECTED_FINGERPRINT")
+          FP=$(normalize "$RAW_FP")
+
+          if [ "$EXP" != "$FP" ]; then
+            echo "::error::Fingerprint MISMATCH (expected $EXP, got $FP)"
+            echo "::error::Release tag build fingerprint does not match v1.0.3+ key — in-place update will fail"
+            exit 1
+          fi
+
+          echo "Fingerprint MATCH (matches v1.0.3+ release key)"
+
+      # Upload release APK artifact — different name per trigger
+      - name: Upload release APK artifact (push main)
+        if: ${{ github.event_name == 'push' }}
         uses: actions/upload-artifact@v4
         with:
           name: RemotWRTBot-release-apk
           path: app/build/outputs/apk/release/app-release*.apk
 
-      # Publishes (or overwrites) a GitHub Release tagged vN with the signed
-      # release APK attached -- this is what the app's in-app updater polls
-      # via the GitHub API and downloads from.
+      - name: Upload release APK artifact (pull_request)
+        if: ${{ github.event_name == 'pull_request' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: RemotWRTBot-release-apk-pr-${{ github.event.number }}
+          path: app/build/outputs/apk/release/app-release*.apk
+
+      - name: Upload release APK artifact (workflow_dispatch)
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: RemotWRTBot-release-apk-dispatch-${{ github.run_number }}
+          path: app/build/outputs/apk/release/app-release*.apk
+
+      # Publish GitHub Release — ONLY on push to main (current behavior).
+      # Conditions:
+      # - github.event_name == 'push' (not PR, not workflow_dispatch)
+      # - github.ref == 'refs/heads/main' (only main branch pushes)
+      # - HAS_SIGNING == 'true' (secrets must be configured)
       - name: Publish GitHub Release
-        if: ${{ env.HAS_SIGNING == 'true' }}
+        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && env.HAS_SIGNING == 'true' }}
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ github.run_number }}
