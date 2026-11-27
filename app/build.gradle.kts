@@ -6,7 +6,7 @@ plugins {
 
 android {
     namespace = "com.remotwrt.bot"
-    compileSdk = 34
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.remotwrt.bot"
