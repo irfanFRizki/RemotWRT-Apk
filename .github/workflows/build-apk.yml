@@ -22,8 +22,8 @@ jobs:
       # Fork PRs cannot access secrets and must build unsigned without fingerprint checks.
       HAS_SIGNING: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && secrets.RELEASE_KEYSTORE_BASE64 != '' && secrets.RELEASE_KEYSTORE_PASSWORD != '' && secrets.RELEASE_KEY_ALIAS != '' && secrets.RELEASE_KEY_PASSWORD != '' }}
     outputs:
-      artifact_suffix: ${{ env.ARTIFACT_SUFFIX }}
-      has_signing: ${{ env.HAS_SIGNING }}
+      artifact_suffix: ${{ steps.meta.outputs.artifact_suffix }}
+      has_signing: ${{ steps.meta.outputs.has_signing }}
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4 - https://github.com/actions/checkout/commit/11d5960a326750d5838078e36cf38b85af677262
@@ -39,13 +39,17 @@ jobs:
         with:
           gradle-version: 8.7
 
-      - name: Set artifact suffix
+      - name: Set artifact suffix and signing output
+        id: meta
         run: |
           case "${{ github.event_name }}" in
-            pull_request) echo "ARTIFACT_SUFFIX=-pr-${{ github.event.number }}" >> "$GITHUB_ENV" ;;
-            workflow_dispatch) echo "ARTIFACT_SUFFIX=-dispatch-${{ github.run_number }}" >> "$GITHUB_ENV" ;;
-            *) echo "ARTIFACT_SUFFIX=" >> "$GITHUB_ENV" ;;
+            pull_request) SUFFIX="-pr-${{ github.event.number }}" ;;
+            workflow_dispatch) SUFFIX="-dispatch-${{ github.run_number }}" ;;
+            *) SUFFIX="" ;;
           esac
+          echo "ARTIFACT_SUFFIX=${SUFFIX}" >> "$GITHUB_ENV"
+          echo "artifact_suffix=${SUFFIX}" >> "$GITHUB_OUTPUT"
+          echo "has_signing=${HAS_SIGNING}" >> "$GITHUB_OUTPUT"
 
       - name: Build debug APK
         run: gradle assembleDebug -PverCode=${{ github.run_number }} --no-daemon
@@ -174,7 +178,7 @@ jobs:
       contents: write   # create GitHub Release (tag + upload asset)
     steps:
       - name: Download release APK artifact
-        uses: actions/download-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0 - https://github.com/actions/download-artifact/commit/d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           name: RemotWRTBot-release-apk${{ needs.build.outputs.artifact_suffix }}
           path: .
