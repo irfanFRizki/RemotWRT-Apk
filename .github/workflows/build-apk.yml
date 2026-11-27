@@ -14,7 +14,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     env:
-      EXPECTED_FINGERPRINT: 'D0:86:64:F1:13:E7:E5:67:00:93:35:48:5B:F3:58:0B:64:F2:C1:C5:02:17:76:BF:0D:AB:66:26:F6:E1:2A:FD'
+      EXPECTED_FINGERPRINT: 'F9:75:BD:56:36:57:7E:9B:C5:9D:EC:05:EF:26:14:FC:D8:28:2B:AA:A3:9F:D2:CB:A4:DE:95:77:05:47:40:B2'
       IS_SAME_REPO_PR: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository }}
       # Scope signing secrets to non-PR triggers or same-repository PRs only.
       # Fork PRs cannot access secrets and must build unsigned without fingerprint checks.
