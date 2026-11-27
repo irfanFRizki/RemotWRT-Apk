@@ -5,12 +5,7 @@ on:
     branches: [ "main" ]
   pull_request:
     branches: [ "main" ]
-  workflow_dispatch:
-    inputs:
-      skip_release:
-        description: 'Build signed APK + fingerprint check WITHOUT creating a Release'
-        type: boolean
-        default: true
+  workflow_dispatch: {}
 
 permissions:
   contents: write   # needed to create the GitHub Release on push main
@@ -19,26 +14,38 @@ jobs:
   build:
     runs-on: ubuntu-latest
     env:
-      # HAS_SIGNING is true only when the repo has the signing secrets configured.
-      # For PRs from forks, secrets are not available → HAS_SIGNING will be 'false'.
-      HAS_SIGNING: ${{ secrets.RELEASE_KEYSTORE_BASE64 != '' }}
+      EXPECTED_FINGERPRINT: 'D0:86:64:F1:13:E7:E5:67:00:93:35:48:5B:F3:58:0B:64:F2:C1:C5:02:17:76:BF:0D:AB:66:26:F6:E1:2A:FD'
+      IS_SAME_REPO_PR: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository }}
+      # Scope signing secrets to non-PR triggers or same-repository PRs only.
+      # Fork PRs cannot access secrets and must build unsigned without fingerprint checks.
+      HAS_SIGNING: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && secrets.RELEASE_KEYSTORE_BASE64 != '' && secrets.RELEASE_KEYSTORE_PASSWORD != '' && secrets.RELEASE_KEY_ALIAS != '' && secrets.RELEASE_KEY_PASSWORD != '' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
       - name: Set up JDK 17
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
 
       - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v4
+        uses: gradle/actions/setup-gradle@v3
         with:
           gradle-version: 8.7
+
+      - name: Set artifact suffix
+        run: |
+          case "${{ github.event_name }}" in
+            pull_request) echo "ARTIFACT_SUFFIX=-pr-${{ github.event.number }}" >> "$GITHUB_ENV" ;;
+            workflow_dispatch) echo "ARTIFACT_SUFFIX=-dispatch-${{ github.run_number }}" >> "$GITHUB_ENV" ;;
+            *) echo "ARTIFACT_SUFFIX=" >> "$GITHUB_ENV" ;;
+          esac
 
       - name: Build debug APK
         run: gradle assembleDebug -PverCode=${{ github.run_number }} --no-daemon
@@ -46,123 +53,110 @@ jobs:
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
         with:
-          name: RemotWRTBot-debug-apk
+          name: RemotWRTBot-debug-apk${{ env.ARTIFACT_SUFFIX }}
           path: app/build/outputs/apk/debug/app-debug.apk
 
-      # Decode release keystore — runs only when HAS_SIGNING is true.
-      # For PRs from forks, secrets are not accessible → this step is skipped
-      # and the release build falls back to unsigned (no signing env vars set).
+      # Decodes the RELEASE_KEYSTORE_BASE64 secret into a keystore file and
+      # exposes path + passwords via GITHUB_ENV for app/build.gradle.kts.
+      # Skipped on fork PRs (and on push main if signing secrets are absent).
       - name: Decode release keystore
         if: ${{ env.HAS_SIGNING == 'true' }}
+        env:
+          KS_B64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+          KS_PASS: ${{ secrets.RELEASE_KEYSTORE_PASSWORD }}
+          KS_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+          KEY_PASS: ${{ secrets.RELEASE_KEY_PASSWORD }}
         run: |
-          echo "${{ secrets.RELEASE_KEYSTORE_BASE64 }}" | base64 -d > "${{ runner.temp }}/release.keystore"
-          echo "RELEASE_KEYSTORE_PATH=${{ runner.temp }}/release.keystore" >> "$GITHUB_ENV"
-          echo "RELEASE_KEYSTORE_PASSWORD=${{ secrets.RELEASE_KEYSTORE_PASSWORD }}" >> "$GITHUB_ENV"
-          echo "RELEASE_KEY_ALIAS=${{ secrets.RELEASE_KEY_ALIAS }}" >> "$GITHUB_ENV"
-          echo "RELEASE_KEY_PASSWORD=${{ secrets.RELEASE_KEY_PASSWORD }}" >> "$GITHUB_ENV"
+          set -euo pipefail
+          printf '%s' "$KS_B64" | tr -d '[:space:]' | base64 -d > "${{ runner.temp }}/release.keystore"
+          test -s "${{ runner.temp }}/release.keystore"
+          {
+            printf 'RELEASE_KEYSTORE_PATH=%s\n' "${{ runner.temp }}/release.keystore"
+            printf 'RELEASE_KEYSTORE_PASSWORD=%s\n' "$KS_PASS"
+            printf 'RELEASE_KEY_ALIAS=%s\n' "$KS_ALIAS"
+            printf 'RELEASE_KEY_PASSWORD=%s\n' "$KEY_PASS"
+          } >> "$GITHUB_ENV"
 
-      # Build signed release APK:
-      # - On push main: always (HAS_SIGNING controls whether signed or unsigned)
-      # - On pull_request from THIS repo: signed (secrets available)
-      # - On pull_request from FORK: unsigned (secrets NOT available)
-      # - On workflow_dispatch: signed (skip_release controls Release creation, not signing)
+      # Build release APK:
+      # - push main: signed when HAS_SIGNING is true, else unsigned
+      # - same-repo pull_request: signed
+      # - fork pull_request: unsigned
+      # - workflow_dispatch: signed
       - name: Build release APK
         run: gradle assembleRelease -PverCode=${{ github.run_number }} --no-daemon
 
       # Verify release APK fingerprint against v47 release key.
-      # Runs for ALL triggers that produce a signed APK (i.e. when HAS_SIGNING == 'true').
-      # Fails the build if fingerprint MISMATCH.
+      # Required on same-repo PRs, workflow_dispatch, and signed push main builds.
+      # Skipped on fork PRs (unsigned) and unsigned push main builds.
       - name: Verify release APK fingerprint
-        if: ${{ env.HAS_SIGNING == 'true' }}
+        if: ${{ env.IS_SAME_REPO_PR == 'true' || github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && env.HAS_SIGNING == 'true') }}
         run: |
           set -euo pipefail
-          APK=$(ls app/build/outputs/apk/release/app-release*.apk 2>/dev/null | head -n1)
-          if [ -z "$APK" ]; then
-            echo "::error::Release APK not found"
+          APK="app/build/outputs/apk/release/app-release.apk"
+          if [ ! -f "$APK" ]; then
+            echo "::error::Signed release APK not found at $APK"
+            ls -la app/build/outputs/apk/release/ 2>/dev/null || true
             exit 1
           fi
 
-          EXPECTED_FINGERPRINT="D0:86:64:F1:13:E7:E5:67:00:93:35:48:5B:F3:58:0B:64:F2:C1:C5:02:17:76:BF:0D:AB:66:26:F6:E1:2A:FD"
-
-          # Locate apksigner (no apt-get; use runner's Android SDK)
+          SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          BT_DIR="$SDK/build-tools"
           find_apksigner() {
-            local dir="$1" matches=""
-            for p in "$dir"/*/apksigner; do
-              [ -x "$p" ] && matches+="${p}"$'\n'
+            local p m=""
+            for p in "$1"/*/apksigner; do
+              [ -x "$p" ] && m+="${p}"$'\n'
             done
-            if [ -n "$matches" ]; then
-              printf '%s' "$matches" | sort -V | tail -n1
+            if [ -n "$m" ]; then
+              printf '%s' "$m" | sort -V | tail -n1
             fi
           }
-
-          BUILD_TOOLS_DIR="/usr/local/lib/android/sdk/build-tools"
-          APKSIGNER=$(find_apksigner "$BUILD_TOOLS_DIR")
-
+          APKSIGNER="$(find_apksigner "$BT_DIR")"
           if [ -z "$APKSIGNER" ]; then
-            echo "::error::Could not locate apksigner under $BUILD_TOOLS_DIR"
-            exit 1
+            echo "::warning::apksigner not found under $BT_DIR (SDK=$SDK, ANDROID_HOME=${ANDROID_HOME:-<unset>}, ANDROID_SDK_ROOT=${ANDROID_SDK_ROOT:-<unset>})"
+            ls -la "$BT_DIR" 2>/dev/null || ls -la "$SDK" 2>/dev/null || echo "$SDK does not exist"
+            MGR="$SDK/cmdline-tools/latest/bin/sdkmanager"; [ -x "$MGR" ] || MGR="$(command -v sdkmanager || true)"
+            [ -x "$MGR" ] && { (set +o pipefail; yes | "$MGR" --sdk_root="$SDK" "build-tools;34.0.0"); APKSIGNER="$(find_apksigner "$BT_DIR")"; }
           fi
+          [ -n "$APKSIGNER" ] || { echo "::error::no apksigner found; checked $BT_DIR"; exit 1; }
 
           echo "Using apksigner: $APKSIGNER"
 
-          # Extract SHA-256 fingerprint from APK signing certificate
-          if ! CERT_INFO=$("$APKSIGNER" verify --print-certs "$APK" 2>&1); then
-            APKSIGNER_EXIT=$?
-            echo "::error::apksigner verify failed with exit code $APKSIGNER_EXIT"
-            echo "$CERT_INFO"
-            exit "$APKSIGNER_EXIT"
+          if CERT_INFO=$("$APKSIGNER" verify --print-certs "$APK" 2>&1); then
+            RAW_FP=$(printf '%s\n' "$CERT_INFO" | grep -i 'SHA-256 digest:' | head -n1 | sed -E 's/.*digest:[[:space:]]*//' || true)
+          else
+            CODE=$?
+            echo "::error::apksigner verify failed (exit $CODE)"
+            printf '%s\n' "$CERT_INFO"
+            exit "$CODE"
           fi
-
-          # Parse SHA-256 digest from apksigner output (handles both formats)
-          RAW_FP=$(printf '%s\n' "$CERT_INFO" | grep -i 'SHA-256 digest:' | head -n1 | sed -E 's/.*SHA-256 digest:[[:space:]]*//' || true)
 
           if [ -z "$RAW_FP" ]; then
             echo "::error::Could not extract SHA-256 fingerprint from APK using apksigner"
-            echo "apksigner output:"
-            echo "$CERT_INFO"
+            printf '%s\n' "$CERT_INFO"
             exit 1
           fi
 
-          # Normalize both fingerprints (lowercase, no colons)
-          normalize() { printf '%s' "$1" | tr -d ':' | tr '[:upper:]' '[:lower:]'; }
-          EXP=$(normalize "$EXPECTED_FINGERPRINT")
-          FP=$(normalize "$RAW_FP")
+          normalize_fp() { printf '%s' "$1" | tr 'a-z' 'A-Z' | tr -cd '0-9A-F' | sed -E 's/(..)/\1:/g; s/:$//'; }
+          FP=$(normalize_fp "$RAW_FP")
+          EXP=$(normalize_fp "$EXPECTED_FINGERPRINT")
+          [ "${#FP}" -eq 95 ] || { echo "::error::Unexpected fingerprint format: $FP"; exit 1; }
 
-          if [ "$EXP" != "$FP" ]; then
+          echo "APK SHA-256 fingerprint: $FP"
+          if [ "$FP" = "$EXP" ]; then
+            echo "Fingerprint MATCH (matches v47 release key)"
+          else
             echo "::error::Fingerprint MISMATCH (expected $EXP, got $FP)"
-            echo "::error::Release tag build fingerprint does not match v1.0.3+ key — in-place update will fail"
             exit 1
           fi
 
-          echo "Fingerprint MATCH (matches v1.0.3+ release key)"
-
-      # Upload release APK artifact — different name per trigger
-      - name: Upload release APK artifact (push main)
-        if: ${{ github.event_name == 'push' }}
+      # Upload release APK artifact — distinct name per trigger
+      - name: Upload release APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: RemotWRTBot-release-apk
+          name: RemotWRTBot-release-apk${{ env.ARTIFACT_SUFFIX }}
           path: app/build/outputs/apk/release/app-release*.apk
 
-      - name: Upload release APK artifact (pull_request)
-        if: ${{ github.event_name == 'pull_request' }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: RemotWRTBot-release-apk-pr-${{ github.event.number }}
-          path: app/build/outputs/apk/release/app-release*.apk
-
-      - name: Upload release APK artifact (workflow_dispatch)
-        if: ${{ github.event_name == 'workflow_dispatch' }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: RemotWRTBot-release-apk-dispatch-${{ github.run_number }}
-          path: app/build/outputs/apk/release/app-release*.apk
-
-      # Publish GitHub Release — ONLY on push to main (current behavior).
-      # Conditions:
-      # - github.event_name == 'push' (not PR, not workflow_dispatch)
-      # - github.ref == 'refs/heads/main' (only main branch pushes)
-      # - HAS_SIGNING == 'true' (secrets must be configured)
+      # Publish GitHub Release — ONLY on push to main when signing is configured.
       - name: Publish GitHub Release
         if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && env.HAS_SIGNING == 'true' }}
         uses: softprops/action-gh-release@v2
